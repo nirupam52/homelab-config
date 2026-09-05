@@ -91,7 +91,7 @@ Apply the Docker data-root configuration before starting containers:
 sudo install -d -m 0755 /srv/homelab/docker
 
 sudo install -D -m 0644 \
-  /srv/homelab/repo/config/setup/docker/daemon.json \
+  /srv/homelab/repo/docker/daemon.json \
   /etc/docker/daemon.json
 
 sudo apt-get update
@@ -137,8 +137,8 @@ Install UFW, then apply and check the hardening:
 ```bash
 sudo apt-get update
 sudo apt-get install -y ufw
-sudo sh /srv/homelab/repo/config/setup/hardening/apply.sh --tailscale-ssh-tested
-sudo sh /srv/homelab/repo/config/setup/hardening/verify.sh
+sudo sh /srv/homelab/repo/hardening/apply.sh --tailscale-ssh-tested
+sudo sh /srv/homelab/repo/hardening/verify.sh
 ```
 
 The apply script does not reboot the Pi. It configures UFW, stops normal SSH
@@ -150,7 +150,7 @@ Reboot after the first local check, then run the check again:
 
 ```bash
 sudo reboot
-sudo sh /srv/homelab/repo/config/setup/hardening/verify.sh
+sudo sh /srv/homelab/repo/hardening/verify.sh
 ```
 
 The scripts check local state only. After the services below are running,
@@ -183,7 +183,7 @@ Do not blindly re-enable Avahi, Wi-Fi, or Bluetooth.
 ## 6. Configure the services
 
 ```bash
-cd /srv/homelab/repo/config/setup
+cd /srv/homelab/repo
 cp .env.example .env
 chmod 600 .env
 nano .env
@@ -208,7 +208,7 @@ sudo docker compose ps
 ## 7. Enable private web access
 
 ```bash
-sh /srv/homelab/repo/config/setup/tailscale/serve.sh
+sh /srv/homelab/repo/tailscale/serve.sh
 tailscale serve status
 ```
 
@@ -272,7 +272,7 @@ confirm that the router has no port forwarding to the Pi.
 Images are pinned to explicit release tags in `compose.yaml`.
 
 ```bash
-cd /srv/homelab/repo/config/setup
+cd /srv/homelab/repo
 sudo docker compose pull
 sudo docker compose up -d
 ```

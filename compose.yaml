@@ -5,12 +5,12 @@ services:
     image: pihole/pihole:2026.07.2
     environment:
       TZ: ${TZ:-UTC}
-      FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD:?Set PIHOLE_WEBPASSWORD in config/setup/.env}
+      FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD:?Set PIHOLE_WEBPASSWORD in .env}
       FTLCONF_webserver_port: "80"
       FTLCONF_dns_listeningMode: "ALL"
     ports:
-      - "${TAILSCALE_IPV4:?Set TAILSCALE_IPV4 in config/setup/.env}:53:53/tcp"
-      - "${TAILSCALE_IPV4:?Set TAILSCALE_IPV4 in config/setup/.env}:53:53/udp"
+      - "${TAILSCALE_IPV4:?Set TAILSCALE_IPV4 in .env}:53:53/tcp"
+      - "${TAILSCALE_IPV4:?Set TAILSCALE_IPV4 in .env}:53:53/udp"
       - "127.0.0.1:8081:80/tcp"
     volumes:
       - pihole:/etc/pihole
