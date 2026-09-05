@@ -60,8 +60,28 @@ sudo mount /srv/homelab
 df -h /srv/homelab
 ```
 
-Place this repository checkout at `/srv/homelab/repo` using the preferred
-transfer method.
+The repository checkout should be owned by the account that performs updates. Run these commands as the normal Pi login user:
+
+```bash
+PI_USER="$(id -un)"
+PI_GROUP="$(id -gn)"
+sudo install -d -o "$PI_USER" -g "$PI_GROUP" -m 0755 /srv/homelab/repo
+```
+
+If the checkout already exists and was created with `sudo`, repair its ownership once:
+
+```bash
+sudo chown -R "$(id -un):$(id -gn)" /srv/homelab/repo
+```
+
+Clone, copy, and update the checkout without `sudo`:
+
+```bash
+cd /srv/homelab/repo
+git pull
+```
+
+Only the repository is user-owned; keep `/srv/homelab/docker` root-managed for Docker.
 
 ## 4. Install Docker
 
