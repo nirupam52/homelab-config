@@ -1,0 +1,5 @@
+# Deployment secrets
+**/.env
+
+# Runtime service data
+**/data/
