@@ -236,8 +236,8 @@ tailscale serve status
 
 Use the single node URL reported by `tailscale serve status`:
 
-- Dozzle: `https://<node>.tailnet.ts.net/` (HTTPS `443`)
-- Pi-hole: `https://<node>.tailnet.ts.net:8443/admin/` (HTTPS `8443`)
+- Dozzle: `https://dozzle.tailnet.ts.net/` (HTTPS `443`)
+- Pi-hole: `https://pihole.tailnet.ts.net/admin/` (HTTPS `443`)
 
 Both URLs proxy to loopback backends (`127.0.0.1:8080` and
 `127.0.0.1:8081`); neither backend is exposed directly to the LAN. If
