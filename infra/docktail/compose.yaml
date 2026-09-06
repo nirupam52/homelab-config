@@ -1,0 +1,13 @@
+name: docktail
+
+services:
+  docktail:
+    image: ghcr.io/marvinvr/docktail:latest
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/tailscale:/var/run/tailscale
+    environment:
+      TAILSCALE_OAUTH_CLIENT_ID: ${TAILSCALE_OAUTH_CLIENT_ID:?Set TAILSCALE_OAUTH_CLIENT_ID in .env}
+      TAILSCALE_OAUTH_CLIENT_SECRET: ${TAILSCALE_OAUTH_CLIENT_SECRET:?Set TAILSCALE_OAUTH_CLIENT_SECRET in .env}

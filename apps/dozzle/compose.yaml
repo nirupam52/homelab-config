@@ -1,0 +1,14 @@
+name: dozzle
+
+services:
+  dozzle:
+    image: amir20/dozzle:v10.9.2@sha256:3d16399007c952832fecea05a176f873a3e32604d1805a68930edbea5a81b324
+    command: ["--no-analytics"]
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - "docktail.service.enable=true"
+      - "docktail.service.name=dozzle"
+      - "docktail.service.port=8080"
+      - "docktail.service.service-port=443"
