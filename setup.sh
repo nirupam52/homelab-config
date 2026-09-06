@@ -91,7 +91,7 @@ EOF
 install_packages() {
     printf '%s\n' '== Install host packages =='
     apt-get update
-    apt-get install -y ca-certificates curl docker.io ufw unattended-upgrades
+    apt-get install -y ca-certificates curl docker.io ufw unattended-upgrades locales
 
     if ! docker compose version >/dev/null 2>&1; then
         if ! apt-get install -y docker-compose-v2 >/dev/null 2>&1 || \
@@ -101,6 +101,15 @@ install_packages() {
     fi
     docker compose version >/dev/null 2>&1 || \
         fail 'Docker Compose v2 could not be installed'
+}
+
+configure_locale() {
+    printf '%s\n' '== Configure system locale =='
+    locale-gen en_US.UTF-8
+    if ! LANG=C LC_ALL=C locale -a | grep -Eiq '^en_US\.(utf8|UTF-8)$'; then
+        fail 'en_US.UTF-8 locale was not generated'
+    fi
+    LANG=C LC_ALL=C update-locale LANG=en_US.UTF-8
 }
 
 sync_compose() {
@@ -299,6 +308,7 @@ start_stack() {
 }
 
 install_packages
+configure_locale
 mount_ssd
 configure_docker
 configure_tailscale

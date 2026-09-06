@@ -146,9 +146,9 @@ The guided prompts request:
 The script records the Pi's Tailscale IPv4 address in the runtime Pi-hole
 `.env` file for the DNS port binding.
 
-The script then installs Docker, Compose, UFW, Tailscale, and unattended
-upgrades; mounts the SSD; moves Docker's data root; applies the Wi-Fi and
-Bluetooth boot overlays; configures the firewall; disables system SSH,
+The script then installs Docker, Compose, UFW, the `en_US.UTF-8` locale, and
+unattended upgrades; mounts the SSD; moves Docker's data root; applies the
+Wi-Fi and Bluetooth boot overlays; configures the firewall; disables system SSH,
 Avahi, triggerhappy, and Bluetooth; connects Tailscale with:
 
 ```sh
