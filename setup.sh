@@ -209,7 +209,7 @@ configure_boot() {
 
 configure_firewall() {
     printf '%s\n' '== Configure Tailscale-only firewall =='
-    if ufw show added | grep '^ufw allow ' | grep -v ' on tailscale0 ' | grep -q .; then
+    if ufw show added | grep '^ufw allow ' | grep -vE ' on tailscale0([[:space:]]|$)' | grep -q .; then
         fail 'UFW has an existing non-Tailscale allow rule; remove it manually before continuing'
     fi
 
