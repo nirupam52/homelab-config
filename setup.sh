@@ -96,8 +96,7 @@ install_packages() {
     if ! docker compose version >/dev/null 2>&1; then
         if ! apt-get install -y docker-compose-v2 >/dev/null 2>&1 || \
            ! docker compose version >/dev/null 2>&1; then
-            install_docker_repository
-            apt-get install -y docker-compose-plugin
+            apt-get install -y --no-install-recommends docker-compose-plugin
         fi
     fi
     docker compose version >/dev/null 2>&1 || \
