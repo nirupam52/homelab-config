@@ -52,16 +52,56 @@ ask_secret() {
     printf '\n' >&2
 }
 
+install_docker_repository() {
+    DOCKER_KEYRING=${1:-/etc/apt/keyrings/docker.asc}
+    DOCKER_SOURCES=${2:-/etc/apt/sources.list.d/docker.sources}
+    . /etc/os-release
+    case "${ID:-}:${ID_LIKE:-}" in
+        debian:*|raspbian:*|*:debian*) DOCKER_REPO_OS=debian ;;
+        ubuntu:*|*:ubuntu*) DOCKER_REPO_OS=ubuntu ;;
+        *) fail "Docker Compose v2 is unavailable for ${ID:-unknown}" ;;
+    esac
+
+    DOCKER_SUITE=${VERSION_CODENAME:-}
+    [ -n "$DOCKER_SUITE" ] || fail 'Docker repository codename was not found'
+    need dpkg
+    DOCKER_ARCH=$(dpkg --print-architecture)
+    case "$DOCKER_ARCH" in
+        amd64|arm64|armhf|ppc64el|s390x) ;;
+        *) fail "Docker repository does not support architecture $DOCKER_ARCH" ;;
+    esac
+
+    DOCKER_KEYRING_DIR=${DOCKER_KEYRING%/*}
+    DOCKER_SOURCES_DIR=${DOCKER_SOURCES%/*}
+    install -m 0755 -d "$DOCKER_KEYRING_DIR" "$DOCKER_SOURCES_DIR"
+    curl -fsSL "https://download.docker.com/linux/$DOCKER_REPO_OS/gpg" \
+        -o "$DOCKER_KEYRING"
+    chmod a+r "$DOCKER_KEYRING"
+    cat > "$DOCKER_SOURCES" <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/$DOCKER_REPO_OS
+Suites: $DOCKER_SUITE
+Components: stable
+Architectures: $DOCKER_ARCH
+Signed-By: $DOCKER_KEYRING
+EOF
+    apt-get update
+}
+
 install_packages() {
     printf '%s\n' '== Install host packages =='
     apt-get update
     apt-get install -y ca-certificates curl docker.io ufw unattended-upgrades
 
     if ! docker compose version >/dev/null 2>&1; then
-        apt-get install -y docker-compose-v2 2>/dev/null || \
-            apt-get install -y docker-compose-plugin 2>/dev/null || \
-            fail 'Docker Compose v2 package is unavailable'
+        if ! apt-get install -y docker-compose-v2 >/dev/null 2>&1 || \
+           ! docker compose version >/dev/null 2>&1; then
+            install_docker_repository
+            apt-get install -y docker-compose-plugin
+        fi
     fi
+    docker compose version >/dev/null 2>&1 || \
+        fail 'Docker Compose v2 could not be installed'
 }
 
 sync_compose() {
