@@ -1,338 +1,172 @@
-# Homelab setup
-
-This directory contains the homelab deployment:
-
-- Raspberry Pi
-- SD Card for OS, Everything else on SSD
-- Tailscale-only access
-- Using tailscale services to proxy docker services and make accessible over tailnet
-
-## Storage layout
-
-The SSD is mounted at `/srv/homelab`.
-
-```text
-SD card
-└── OS
-
-SSD: /srv/homelab
-├── repo/              repository checkout
-└── docker/            Docker images, containers, and volumes
-```
-
-The Docker data directory is configured in `docker/daemon.json`. The Pi-hole
-volume is therefore stored on the SSD.
-
-## 1. Verify the disks
-
-Run this on the Raspberry Pi:
-
-```bash
-lsblk -o NAME,PATH,SIZE,TYPE,FSTYPE,LABEL,UUID,MOUNTPOINTS,MODEL,TRAN
-```
-Assuming the partition we want to mount is `sda2`
-
-Confirm that the dedicated SSD partition is `/dev/sda2` and that the SD card
-is `/dev/mmcblk0`. Never format `/dev/mmcblk0`.
-
-## 2. Format the SSD partition
-
-Only run this if `/dev/sda2` is not already the intended empty ext4 partition.
-This erases `/dev/sda2`:
-
-```bash
-sudo mkfs.ext4 -m 1 -L homelab /dev/sda2
-```
-
-## 3. Mount the SSD
-
-```bash
-sudo mkdir -p /srv/homelab
-
-SSD_UUID="$(sudo blkid -s UUID -o value /dev/sda2)"
-test -n "$SSD_UUID"
-
-if ! grep -q "UUID=$SSD_UUID /srv/homelab " /etc/fstab; then
-  printf 'UUID=%s /srv/homelab ext4 defaults,noatime,nofail 0 2\n' \
-    "$SSD_UUID" | sudo tee -a /etc/fstab >/dev/null
-fi
-
-sudo mount /srv/homelab
-df -h /srv/homelab
-```
-
-The repository checkout should be owned by the account that performs updates. Run
-these commands as the normal Pi login user:
-
-```bash
-PI_USER="$(id -un)"
-PI_GROUP="$(id -gn)"
-sudo install -d -o "$PI_USER" -g "$PI_GROUP" -m 0755 /srv/homelab/repo
-```
-
-On the first setup, clone the repository from its remote:
-
-```bash
-git clone https://github.com/nirupam52/homelab-config.git /srv/homelab/repo
-```
-
-If the checkout already exists and was created with `sudo`, repair its ownership
-once:
-
-```bash
-sudo chown -R "$(id -un):$(id -gn)" /srv/homelab/repo
-```
-
-For an existing checkout, update without `sudo`. Fetch first, review the
-available commits, then check out the exact revision approved for deployment:
-
-```bash
-cd /srv/homelab/repo
-git fetch origin
-git log --oneline HEAD..origin/main
-git checkout <reviewed-commit>
-```
-
-Fetching does not make a revision reviewed; do not treat a plain `git pull` as
-review. Only the repository is user-owned; keep `/srv/homelab/docker`
-root-managed for Docker.
-
-
-## 4. Install Docker
-
-Apply the Docker data-root configuration before starting containers:
-
-```bash
-sudo install -d -m 0755 /srv/homelab/docker
-
-sudo install -D -m 0644 \
-  /srv/homelab/repo/docker/daemon.json \
-  /etc/docker/daemon.json
-
-sudo apt-get update
-sudo apt-get install -y python3 docker.io docker-compose
-sudo systemctl enable --now docker
-```
-
-Verify that Docker uses the SSD:
-
-```bash
-sudo docker info --format 'DockerRootDir={{.DockerRootDir}}'
-```
-
-Expected output:
-
-```text
-DockerRootDir=/srv/homelab/docker
-```
-
-## 5. Install and connect Tailscale
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-sudo tailscale set --ssh
-sudo tailscale set --accept-dns=false
-sudo tailscale ip -4
-```
-
-Complete the authentication link shown by `tailscale up`. Save the IPv4
-address for the Compose environment file.
-
-
-## Host hardening
-
-Keep the Pi on wired access, or keep a console/recovery path open.
-Before stopping normal SSH, connect to this Pi over Tailscale SSH from a second
-tailnet device and confirm that it works. The apply script will not continue
-without its explicit confirmation flag.
-
-The hardening entrypoints are Python 3.8+ modules using only the standard
-library. Ensure `python3` is installed before applying or deploying; the
-entrypoints fail before changing host state when an older Python is used:
-
-```bash
-python3 --version
-```
-
-Install UFW, then apply and check the hardening:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y ufw
-sudo sh /srv/homelab/repo/hardening/apply.sh --tailscale-ssh-tested
-sudo sh /srv/homelab/repo/hardening/verify.sh
-```
-
-The apply script does not reboot the Pi. It configures UFW, stops normal SSH
-and Avahi, disables Wi-Fi and Bluetooth services, and adds persistent radio
-overlays. It does not reset UFW or remove packages. If it finds unexpected
-firewall rules, stop and review them instead of resetting UFW.
-
-Reboot after the first local check, then run the check again:
-
-```bash
-sudo reboot
-sudo sh /srv/homelab/repo/hardening/verify.sh
-```
-
-The scripts check local state only. After the services below are running,
-complete the LAN, tailnet, and external checks in section 9.
-
-Keep the Compose bindings narrow. Do not publish a new Docker port on
-`0.0.0.0` or `[::]`; Docker can route published ports before UFW sees them.
-Do not add a Docker `iptables=false` setting.
-
-If recovery is needed, use the console or the current Tailscale path:
-
-```bash
-sudo ufw disable
-```
-
-To undo the radio change, remove only the `dtoverlay=disable-wifi` and
-`dtoverlay=disable-bt` lines added by the script. Remove their `[all]` section
-only if it was created solely for those lines, then reboot. The script keeps
-one backup beside the boot config; do not overwrite a newer boot config with
-the whole backup without checking it first.
-
-Re-enable normal SSH only deliberately and only for recovery:
-
-```bash
-sudo systemctl enable --now ssh.service
-```
-
-Do not blindly re-enable Avahi, Wi-Fi, or Bluetooth.
-
-## 6. Configure the services
-
-```bash
-cd /srv/homelab/repo
-cp .env.example .env
-chmod 600 .env
-nano .env
-```
-
-Set these values:
-
-```dotenv
-TZ=UTC
-TAILSCALE_IPV4=<Pi IPv4 address from tailscale ip -4>
-PIHOLE_WEBPASSWORD=<strong Pi-hole web password>
-```
-
-Deploy the Compose project through the single deployment entrypoint. It checks
-the configured environment and host hardening before changing containers:
-
-```bash
-./deploy.sh
-```
-
-## 7. Enable private web access
-
-```bash
-./tailscale/serve.sh
-tailscale serve status
-```
-
-Use the single node URL reported by `tailscale serve status`:
-
-- Dozzle: `https://dozzle.tailnet.ts.net/` (HTTPS `443`)
-- Pi-hole: `https://pihole.tailnet.ts.net/admin/` (HTTPS `443`)
-
-Both URLs proxy to loopback backends (`127.0.0.1:8080` and
-`127.0.0.1:8081`); neither backend is exposed directly to the LAN. If
-Tailscale asks to enable HTTPS certificates for the tailnet, approve it.
-
-## 8. Configure tailnet DNS
+# Raspberry Pi homelab
+
+This repository configures one Raspberry Pi 5 running Raspberry Pi OS Lite
+64-bit. The OS stays on the SD card. Docker's data root and application data
+stay on an SSD. The Pi and every application are reachable only through
+Tailscale.
+
+## Design
+
+- `setup.sh` is the only host setup and deployment entrypoint.
+- The SSD is mounted at `/mnt/ssd` by UUID.
+- Docker stores images and containers in `/mnt/ssd/docker`.
+- Application data and runtime secrets live under `/mnt/ssd/homelab/`.
+- `infra/docktail/compose.yaml` runs one DockTail controller.
+- `apps/*/compose.yaml` contains one application per Compose project.
+- Compose files contain no `ports:` entries. DockTail reaches container IPs
+  directly and publishes private Tailscale Services from Docker labels.
+- No Tailscale sidecars, Tailscale Serve files, or host port bindings are used.
+
+DockTail needs read-only access to the Docker socket and the host Tailscale
+socket. This is a deliberate trade-off: Docker metadata and environment values
+are visible to the controller, but it cannot create or exec into containers
+through the read-only socket. DockTail is community-maintained AGPL software,
+and Tailscale Services is a public beta feature.
+
+## Before running setup
 
 In the Tailscale admin console:
 
-1. Open **DNS**.
-2. Add the Pi's Tailscale IPv4 address as a nameserver.
-3. Keep MagicDNS enabled.
-4. Enable local-DNS override if every tailnet device should use Pi-hole.
+1. Enable MagicDNS and HTTPS certificates.
+2. Create the `tag:server` tag and allow `autogroup:admin` to own it.
+3. Create a DockTail OAuth client scoped to `tag:server` with Services write
+   permission. Keep the client ID and secret ready for the setup prompts.
+4. Add an ACL equivalent to:
 
-The LAN is not changed. Pi-hole DNS is bound only to the Pi's Tailscale IPv4
-address.
+```json
+{
+  "tagOwners": {
+    "tag:server": ["autogroup:admin"]
+  },
+  "acls": [
+    {"action": "accept", "src": ["autogroup:member"], "dst": ["tag:server:*"]}
+  ],
+  "ssh": [
+    {
+      "action": "accept",
+      "src": ["autogroup:member"],
+      "dst": ["tag:server"],
+      "users": ["autogroup:nonroot", "root"]
+    }
+  ]
+}
+```
 
-## 9. Verify
+Prepare an already-formatted SSD partition with a filesystem UUID. The script
+will never format a disk. Keep a local keyboard/monitor available for the
+first run because system SSH is disabled after Tailscale SSH is confirmed.
+
+## First setup
+
+Clone this repository on the Pi and run the script as root:
+
+```sh
+git clone https://github.com/nirupam52/homelab-config.git ~/homelab-config
+cd ~/homelab-config
+sudo ./setup.sh
+```
+
+The guided prompts request:
+
+1. The SSD partition, such as `/dev/sda1`.
+2. The Tailscale OAuth client ID and secret.
+3. A Pi-hole web password.
+4. Confirmation that Tailscale SSH works from another tailnet device.
+
+The script then installs Docker, Compose, UFW, Tailscale, and unattended
+upgrades; mounts the SSD; moves Docker's data root; applies the Wi-Fi and
+Bluetooth boot overlays; configures the firewall; disables system SSH,
+Avahi, triggerhappy, and Bluetooth; connects Tailscale with:
+
+```sh
+tailscale up --ssh --advertise-tags=tag:server
+```
+
+Finally it starts DockTail, Pi-hole, and Dozzle. Run it again after a reboot or
+repository update to reconcile the same configuration. Existing runtime
+secret files are preserved and kept mode `600`.
+
+Reboot once after the first run so the device-tree radio overlays take effect:
+
+```sh
+sudo reboot
+```
+
+## Services
+
+After Tailscale approves the advertised services, the usual URLs are:
+
+- `https://dozzle.<tailnet>.ts.net`
+- `https://pihole.<tailnet>.ts.net/admin/`
+
+Pi-hole also advertises `pihole-dns` through DockTail as TCP port 53. Tailscale
+Services currently supports TCP only, so normal UDP DNS is intentionally not
+published. Use the Pi-hole web service for administration; do not add a Docker
+`ports:` entry to work around this limitation.
+
+DockTail watches the labels in the application Compose files. Adding an app
+means adding another labeled Compose project; do not add a Tailscale sidecar or
+host port publication. Do not add `docktail.funnel.*` labels: nothing is public.
+
+Runtime state is separate from the checkout. Setup mirrors the Compose files
+onto the SSD before starting them:
+
+```text
+SD card
+└── ~/homelab-config        repository
+
+SSD: /mnt/ssd
+├── docker/                  Docker data root
+└── homelab/
+    ├── apps/dozzle/compose.yaml
+    ├── apps/pihole/compose.yaml
+    ├── apps/pihole/.env     Pi-hole secret
+    ├── apps/pihole/data/    Pi-hole data
+    ├── apps/pihole/dnsmasq.d/
+    ├── infra/docktail/compose.yaml
+    └── infra/docktail/.env DockTail OAuth secret
+```
+
+## Verify and update
 
 On the Pi:
 
-```bash
-sudo docker compose ps
-sudo ss -lntup
-tailscale serve status
+```sh
+findmnt /mnt/ssd
+docker info --format 'DockerRootDir={{.DockerRootDir}}'
+sudo ufw status verbose
+tailscale status
+docker compose --env-file /mnt/ssd/homelab/infra/docktail/.env \
+  -f /mnt/ssd/homelab/infra/docktail/compose.yaml ps
+docker compose --env-file /mnt/ssd/homelab/apps/pihole/.env \
+  -f /mnt/ssd/homelab/apps/pihole/compose.yaml ps
+docker compose -f /mnt/ssd/homelab/apps/dozzle/compose.yaml ps
 ```
 
-Expected bindings:
+The firewall defaults to deny incoming and allow outgoing, with an inbound
+allow only on `tailscale0`. No service should appear in `docker ps` with a
+published host port. Check the Tailscale admin console if a DockTail service is
+pending approval.
 
-```text
-<Tailscale IPv4>:53   Pi-hole DNS
-127.0.0.1:8080        Dozzle backend
-127.0.0.1:8081        Pi-hole web backend
+For an update, review the repository change and run the same setup command:
+
+```sh
+cd ~/homelab-config
+git pull --ff-only
+sudo ./setup.sh
 ```
 
-From another Tailscale device:
+`docker compose up -d` reconciles changed images and configuration without
+removing application data. Do not run `docker compose down -v`.
 
-```bash
-nslookup example.com <Pi Tailscale IPv4>
+## Recovery trade-off
+
+System `sshd` is disabled. If Tailscale is unavailable, remote recovery is not
+possible; use the local console or re-flash the SD card. The SSD data remains
+untouched. To re-enable system SSH deliberately from the console:
+
+```sh
+sudo systemctl enable --now ssh.service
 ```
 
-Then open the URLs shown by `tailscale serve status`.
-They should show only tailnet access.
-
-From a LAN device that is not using Tailscale:
-
-- SSH to the Pi's LAN IP should fail.
-- DNS queries to the Pi's LAN IP should fail.
-- The Pi's LAN IP and LAN IP on port `8443` should not open.
-
-From outside the home network, confirm that no service is reachable. Also
-confirm that the router has no port forwarding to the Pi.
-
-## Updating and stopping
-
-Images are pinned to readable release tags and immutable arm64 sha256 digests
-in `compose.yaml` for this Raspberry Pi.
-
-For a normal update, keep the repository user-owned. Fetch and review changes,
-check out the exact approved revision, then run the deployment entrypoint:
-
-```bash
-cd /srv/homelab/repo
-git fetch origin
-git log --oneline HEAD..origin/main
-git checkout <reviewed-commit>
-./deploy.sh
-```
-
-`deploy.sh` requires Python 3.8+, validates `.env`, Docker, and the rendered
-Compose bindings against the current Tailscale IPv4, then runs read-only
-hardening verification before pulling or changing containers. The verification
-script owns the warning-only Tailscale Serve status report; deployment does not
-reconfigure Serve.
-
-The Compose project name is `homelab`. Deployment uses `--remove-orphans` to
-converge stale containers that belong to this project. It removes only those
-Compose orphans: it never removes volumes or containers from other Compose
-projects. A changed image or configuration may recreate a service, while the
-named Pi-hole volume is retained.
-
-Stop the services without deleting Pi-hole data:
-
-```bash
-sudo docker compose down
-```
-
-Do not use `docker compose down -v` unless the Pi-hole volume should be
-removed.
-
-
-## References
-
-- [Debian Docker package](https://packages.debian.org/trixie/docker.io)
-- [Debian Docker Compose package](https://packages.debian.org/trixie/docker-compose)
-- [Pi-hole Docker configuration](https://docs.pi-hole.net/docker/configuration/)
-- [Tailscale Linux installation](https://tailscale.com/docs/install/linux)
-- [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve)
+Do not disable the firewall or re-enable wireless services as a routine fix.

@@ -1,7 +1,6 @@
-# Deployment secrets
+# Runtime secrets
 **/.env
 
 # Runtime service data
 **/data/
-**/__pycache__/
-**/*.py[cod]
+**/dnsmasq.d/
