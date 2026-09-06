@@ -1,0 +1,23 @@
+name: pihole
+
+services:
+  pihole:
+    image: pihole/pihole:2026.07.2@sha256:a29ad980775f38a8e7524a206ff9c125bc6fcfd9de8de1fc93d2de0671cc1d34
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-UTC}
+      FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD:?Set PIHOLE_WEBPASSWORD in .env}
+      FTLCONF_webserver_port: "80"
+      FTLCONF_dns_listeningMode: ALL
+    volumes:
+      - /mnt/ssd/homelab/apps/pihole/data:/etc/pihole
+      - /mnt/ssd/homelab/apps/pihole/dnsmasq.d:/etc/dnsmasq.d
+    labels:
+      - "docktail.service.enable=true"
+      - "docktail.service.name=pihole"
+      - "docktail.service.port=80"
+      - "docktail.service.service-port=443"
+      - "docktail.service.1.name=pihole-dns"
+      - "docktail.service.1.port=53"
+      - "docktail.service.1.protocol=tcp"
+      - "docktail.service.1.service-port=53"
