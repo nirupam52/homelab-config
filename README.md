@@ -28,15 +28,21 @@ and Tailscale Services is a public beta feature.
 In the Tailscale admin console:
 
 1. Enable MagicDNS and HTTPS certificates.
-2. Create the `tag:server` tag and allow `autogroup:admin` to own it.
-3. Create a DockTail OAuth client scoped to `tag:server` with Services write
-   permission. Keep the client ID and secret ready for the setup prompts.
+2. Create the `tag:server` and `tag:container` tags. Allow `autogroup:admin` to own `tag:server`, and allow `tag:server` to own `tag:container`.
+3. Create a DockTail OAuth client with General → Services → Write permission. Attach the `tag:container` to this.
+   Keep the client ID and secret ready for the setup prompts.
 4. Add an ACL equivalent to:
 
 ```json
 {
   "tagOwners": {
-    "tag:server": ["autogroup:admin"]
+    "tag:server": ["autogroup:admin"],
+    "tag:container": ["tag:server"]
+  },
+  "autoApprovers": {
+    "services": {
+      "tag:container": ["tag:server"]
+    }
   },
   "acls": [
     {"action": "accept", "src": ["autogroup:member"], "dst": ["tag:server:*"]}
@@ -150,10 +156,36 @@ sudo reboot
 
 ## Services
 
-After Tailscale approves the advertised services, the usual URLs are:
+After DockTail creates the Service definitions and Tailscale approves the
+advertised hosts, the usual URLs are:
 
 - `https://dozzle.<tailnet>.ts.net`
 - `https://pihole.<tailnet>.ts.net/admin/`
+
+`tailscale serve status` only reports the host's local advertisement. It does
+not prove that the Service definition exists in the tailnet control plane.
+
+If the URLs appear locally but the Services page is empty, inspect DockTail's
+control-plane errors:
+
+```sh
+docker compose --project-name docktail \
+  --env-file /mnt/ssd/homelab/infra/docktail/.env \
+  -f /mnt/ssd/homelab/infra/docktail/compose.yaml logs --tail=100 docktail
+```
+
+An error such as `requested tags [tag:container] are invalid or not
+permitted` means the `tag:container` and `autoApprovers.services` policy above
+has not been applied.
+
+After fixing the OAuth permission or tailnet policy, restart DockTail so it
+re-advertises the services:
+
+```sh
+docker compose --project-name docktail \
+  --env-file /mnt/ssd/homelab/infra/docktail/.env \
+  -f /mnt/ssd/homelab/infra/docktail/compose.yaml restart docktail
+```
 
 Pi-hole also advertises `pihole-dns` through DockTail as TCP port 53. Tailscale
 Services currently supports TCP only, so normal UDP DNS is intentionally not
