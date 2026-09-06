@@ -3,3 +3,5 @@
 
 # Runtime service data
 **/data/
+**/__pycache__/
+**/*.py[cod]

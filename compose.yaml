@@ -2,7 +2,7 @@ name: homelab
 
 services:
   pihole:
-    image: pihole/pihole:2026.07.2
+    image: pihole/pihole:2026.07.2@sha256:a29ad980775f38a8e7524a206ff9c125bc6fcfd9de8de1fc93d2de0671cc1d34
     environment:
       TZ: ${TZ:-UTC}
       FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD:?Set PIHOLE_WEBPASSWORD in .env}
@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
 
   dozzle:
-    image: amir20/dozzle:v10.9.2
+    image: amir20/dozzle:v10.9.2@sha256:3d16399007c952832fecea05a176f873a3e32604d1805a68930edbea5a81b324
     command: ["--no-analytics"]
     ports:
       - "127.0.0.1:8080:8080/tcp"

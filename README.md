@@ -5,6 +5,7 @@ This directory contains the homelab deployment:
 - Raspberry Pi
 - SD Card for OS, Everything else on SSD
 - Tailscale-only access
+- Using tailscale services to proxy docker services and make accessible over tailnet
 
 ## Storage layout
 
@@ -60,7 +61,8 @@ sudo mount /srv/homelab
 df -h /srv/homelab
 ```
 
-The repository checkout should be owned by the account that performs updates. Run these commands as the normal Pi login user:
+The repository checkout should be owned by the account that performs updates. Run
+these commands as the normal Pi login user:
 
 ```bash
 PI_USER="$(id -un)"
@@ -68,20 +70,33 @@ PI_GROUP="$(id -gn)"
 sudo install -d -o "$PI_USER" -g "$PI_GROUP" -m 0755 /srv/homelab/repo
 ```
 
-If the checkout already exists and was created with `sudo`, repair its ownership once:
+On the first setup, clone the repository from its remote:
+
+```bash
+git clone https://github.com/nirupam52/homelab-config.git /srv/homelab/repo
+```
+
+If the checkout already exists and was created with `sudo`, repair its ownership
+once:
 
 ```bash
 sudo chown -R "$(id -un):$(id -gn)" /srv/homelab/repo
 ```
 
-Clone, copy, and update the checkout without `sudo`:
+For an existing checkout, update without `sudo`. Fetch first, review the
+available commits, then check out the exact revision approved for deployment:
 
 ```bash
 cd /srv/homelab/repo
-git pull
+git fetch origin
+git log --oneline HEAD..origin/main
+git checkout <reviewed-commit>
 ```
 
-Only the repository is user-owned; keep `/srv/homelab/docker` root-managed for Docker.
+Fetching does not make a revision reviewed; do not treat a plain `git pull` as
+review. Only the repository is user-owned; keep `/srv/homelab/docker`
+root-managed for Docker.
+
 
 ## 4. Install Docker
 
@@ -95,7 +110,7 @@ sudo install -D -m 0644 \
   /etc/docker/daemon.json
 
 sudo apt-get update
-sudo apt-get install -y docker.io docker-compose
+sudo apt-get install -y python3 docker.io docker-compose
 sudo systemctl enable --now docker
 ```
 
@@ -131,6 +146,14 @@ Keep the Pi on wired access, or keep a console/recovery path open.
 Before stopping normal SSH, connect to this Pi over Tailscale SSH from a second
 tailnet device and confirm that it works. The apply script will not continue
 without its explicit confirmation flag.
+
+The hardening entrypoints are Python 3.8+ modules using only the standard
+library. Ensure `python3` is installed before applying or deploying; the
+entrypoints fail before changing host state when an older Python is used:
+
+```bash
+python3 --version
+```
 
 Install UFW, then apply and check the hardening:
 
@@ -197,27 +220,28 @@ TAILSCALE_IPV4=<Pi IPv4 address from tailscale ip -4>
 PIHOLE_WEBPASSWORD=<strong Pi-hole web password>
 ```
 
-Start Docker Services:
+Deploy the Compose project through the single deployment entrypoint. It checks
+the configured environment and host hardening before changing containers:
 
 ```bash
-sudo docker compose config --quiet
-sudo docker compose up -d
-sudo docker compose ps
+./deploy.sh
 ```
 
 ## 7. Enable private web access
 
 ```bash
-sh /srv/homelab/repo/tailscale/serve.sh
+./tailscale/serve.sh
 tailscale serve status
 ```
 
-Tailscale Serve provides:
+Use the single node URL reported by `tailscale serve status`:
 
-- Dozzle at the node HTTPS URL on port `443`.
-- Pi-hole at the same URL on port `8443`, under `/admin/`.
+- Dozzle: `https://<node>.tailnet.ts.net/` (HTTPS `443`)
+- Pi-hole: `https://<node>.tailnet.ts.net:8443/admin/` (HTTPS `8443`)
 
-If Tailscale asks to enable HTTPS certificates for the tailnet, approve it.
+Both URLs proxy to loopback backends (`127.0.0.1:8080` and
+`127.0.0.1:8081`); neither backend is exposed directly to the LAN. If
+Tailscale asks to enable HTTPS certificates for the tailnet, approve it.
 
 ## 8. Configure tailnet DNS
 
@@ -269,13 +293,31 @@ confirm that the router has no port forwarding to the Pi.
 
 ## Updating and stopping
 
-Images are pinned to explicit release tags in `compose.yaml`.
+Images are pinned to readable release tags and immutable arm64 sha256 digests
+in `compose.yaml` for this Raspberry Pi.
+
+For a normal update, keep the repository user-owned. Fetch and review changes,
+check out the exact approved revision, then run the deployment entrypoint:
 
 ```bash
 cd /srv/homelab/repo
-sudo docker compose pull
-sudo docker compose up -d
+git fetch origin
+git log --oneline HEAD..origin/main
+git checkout <reviewed-commit>
+./deploy.sh
 ```
+
+`deploy.sh` requires Python 3.8+, validates `.env`, Docker, and the rendered
+Compose bindings against the current Tailscale IPv4, then runs read-only
+hardening verification before pulling or changing containers. The verification
+script owns the warning-only Tailscale Serve status report; deployment does not
+reconfigure Serve.
+
+The Compose project name is `homelab`. Deployment uses `--remove-orphans` to
+converge stale containers that belong to this project. It removes only those
+Compose orphans: it never removes volumes or containers from other Compose
+projects. A changed image or configuration may recreate a service, while the
+named Pi-hole volume is retained.
 
 Stop the services without deleting Pi-hole data:
 
