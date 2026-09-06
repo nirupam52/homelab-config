@@ -13,9 +13,10 @@ Tailscale.
 - Application data and runtime secrets live under `/mnt/ssd/homelab/`.
 - `infra/docktail/compose.yaml` runs one DockTail controller.
 - `apps/*/compose.yaml` contains one application per Compose project.
-- Compose files contain no `ports:` entries. DockTail reaches container IPs
-  directly and publishes private Tailscale Services from Docker labels.
-- No Tailscale sidecars, Tailscale Serve files, or host port bindings are used.
+- Application Compose files publish no host ports except Pi-hole DNS.
+- Pi-hole binds UDP and TCP port 53 only to the host's Tailscale IPv4 address;
+  DockTail publishes the remaining private application services.
+- No Tailscale sidecars or Tailscale Serve files are used.
 
 DockTail needs read-only access to the Docker socket and the host Tailscale
 socket. This is a deliberate trade-off: Docker metadata and environment values
@@ -49,11 +50,6 @@ In the Tailscale admin console:
       "src": ["autogroup:member"],
       "dst": ["svc:dozzle", "svc:pihole"],
       "ip": ["443"]
-    },
-    {
-      "src": ["autogroup:member"],
-      "dst": ["svc:pihole-dns"],
-      "ip": ["53"]
     }
   ],
   "acls": [
@@ -147,18 +143,23 @@ The guided prompts request:
 3. A Pi-hole web password.
 4. Confirmation that Tailscale SSH works from another tailnet device.
 
+The script records the Pi's Tailscale IPv4 address in the runtime Pi-hole
+`.env` file for the DNS port binding.
+
 The script then installs Docker, Compose, UFW, Tailscale, and unattended
 upgrades; mounts the SSD; moves Docker's data root; applies the Wi-Fi and
 Bluetooth boot overlays; configures the firewall; disables system SSH,
 Avahi, triggerhappy, and Bluetooth; connects Tailscale with:
 
 ```sh
-tailscale up --ssh --advertise-tags=tag:server
+tailscale up --ssh --accept-dns=false --advertise-tags=tag:server
 ```
 
 Finally it starts DockTail, Pi-hole, and Dozzle. Run it again after a reboot or
-repository update to reconcile the same configuration. Existing runtime
-secret files are preserved and kept mode `600`.
+repository update to reconcile the same configuration. It never formats the
+SSD or removes application data and Compose volumes. It does reapply host
+settings and overwrite the mirrored Compose files; existing runtime secret
+values are preserved and files remain mode `600`.
 
 Reboot once after the first run so the device-tree radio overlays take effect:
 
@@ -207,14 +208,40 @@ docker compose --project-name docktail \
   -f /mnt/ssd/homelab/infra/docktail/compose.yaml up -d --force-recreate docktail
 ```
 
-Pi-hole also advertises `pihole-dns` through DockTail as TCP port 53. Tailscale
-Services currently supports TCP only, so normal UDP DNS is intentionally not
-published. Use the Pi-hole web service for administration; do not add a Docker
-`ports:` entry to work around this limitation.
+Pi-hole DNS is published directly on the server's Tailscale IPv4 address over
+UDP and TCP port 53. The binding is restricted to that address. DockTail
+publishes only the Pi-hole web service. Pi-hole is the intentional exception
+to the no-host-port rule; other applications still use DockTail labels and do
+not publish host ports.
 
 DockTail watches the labels in the application Compose files. Adding an app
 means adding another labeled Compose project; do not add a Tailscale sidecar or
 host port publication. Do not add `docktail.funnel.*` labels: nothing is public.
+
+## Tailnet-wide DNS
+
+The setup script records the Pi's Tailscale IPv4 address in
+`/mnt/ssd/homelab/apps/pihole/.env` and publishes Pi-hole on UDP and TCP port
+53 at that address.
+
+After setup:
+
+1. Open the Tailscale admin console's **DNS** page.
+2. Under **Nameservers**, choose **Add nameserver → Custom** and enter the
+   Pi's Tailscale IPv4 address from `tailscale ip -4`.
+3. Enable **Override DNS servers**.
+4. Keep Tailscale DNS enabled on each client. On Linux clients:
+
+   ```sh
+   sudo tailscale set --accept-dns=true
+   ```
+
+5. In Pi-hole's **Lists** settings, verify or add ad/tracker blocklists, then
+   update gravity.
+
+The existing `tag:server:*` ACL permits tailnet members to reach direct DNS on
+the Pi. No `svc:pihole-dns` service is needed because Tailscale Services
+currently support TCP only, while clients normally send DNS over UDP.
 
 Runtime state is separate from the checkout. Setup mirrors the Compose files
 onto the SSD before starting them:
@@ -228,7 +255,7 @@ SSD: /mnt/ssd
 └── homelab/
     ├── apps/dozzle/compose.yaml
     ├── apps/pihole/compose.yaml
-    ├── apps/pihole/.env     Pi-hole secret
+    ├── apps/pihole/.env     Pi-hole password and Tailscale address
     ├── apps/pihole/data/    Pi-hole data
     ├── apps/pihole/dnsmasq.d/
     ├── infra/docktail/compose.yaml
@@ -252,9 +279,22 @@ docker compose -f /mnt/ssd/homelab/apps/dozzle/compose.yaml ps
 ```
 
 The firewall defaults to deny incoming and allow outgoing, with an inbound
-allow only on `tailscale0`. No service should appear in `docker ps` with a
-published host port. Check the Tailscale admin console if a DockTail service is
-pending approval.
+allow only on `tailscale0`. Pi-hole is expected to be the only container with
+published host ports, and its `docker ps` entry should show the configured
+Tailscale IPv4 address mapped to both UDP and TCP port 53. Check the Tailscale
+admin console if a DockTail service is pending approval.
+
+From a Tailscale client, test both DNS transports:
+
+```sh
+PIHOLE_IP=100.x.y.z
+dig @"$PIHOLE_IP" example.com
+dig +tcp @"$PIHOLE_IP" example.com
+```
+
+Then confirm the queries appear in Pi-hole's **Query Log**. If they do not,
+the client is not using Tailscale DNS or is bypassing it with DoH, DoT, a VPN,
+or a private relay.
 
 For an update, review the repository change and run the same setup command:
 

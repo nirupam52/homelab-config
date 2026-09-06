@@ -177,8 +177,9 @@ configure_tailscale() {
     fi
     systemctl enable --now tailscaled
 
-    tailscale up --ssh --advertise-tags=tag:server
-    tailscale ip -4 >/dev/null 2>&1 || fail 'Tailscale is not connected'
+    tailscale up --ssh --accept-dns=false --advertise-tags=tag:server
+    TAILSCALE_IPV4=$(tailscale ip -4) || fail 'Tailscale is not connected'
+    [ -n "$TAILSCALE_IPV4" ] || fail 'Tailscale IPv4 address is empty'
 }
 
 configure_boot() {
@@ -196,8 +197,12 @@ configure_boot() {
         [ -e "$BOOT_CONFIG.homelab.bak" ] || cp -p "$BOOT_CONFIG" "$BOOT_CONFIG.homelab.bak"
         {
             printf '\n[all]\n'
-            printf '%s\n' 'dtoverlay=disable-wifi'
-            printf '%s\n' 'dtoverlay=disable-bt'
+            if ! grep -Eq '^[[:space:]]*dtoverlay=disable-wifi([,[:space:]].*)?[[:space:]]*$' "$BOOT_CONFIG"; then
+                printf '%s\n' 'dtoverlay=disable-wifi'
+            fi
+            if ! grep -Eq '^[[:space:]]*dtoverlay=disable-bt([,[:space:]].*)?[[:space:]]*$' "$BOOT_CONFIG"; then
+                printf '%s\n' 'dtoverlay=disable-bt'
+            fi
         } >> "$BOOT_CONFIG"
     fi
 }
@@ -266,6 +271,11 @@ configure_secrets() {
         ask_secret 'Pi-hole web password'
         [ -n "$SECRET_VALUE" ] || fail 'Pi-hole web password cannot be empty'
         printf 'PIHOLE_WEBPASSWORD=%s\n' "$SECRET_VALUE" > "$PIHOLE_ENV"
+    fi
+    if grep -Eq '^TAILSCALE_IPV4=' "$PIHOLE_ENV"; then
+        sed -i "s/^TAILSCALE_IPV4=.*/TAILSCALE_IPV4=$TAILSCALE_IPV4/" "$PIHOLE_ENV"
+    else
+        printf 'TAILSCALE_IPV4=%s\n' "$TAILSCALE_IPV4" >> "$PIHOLE_ENV"
     fi
     chmod 600 "$PIHOLE_ENV"
 }

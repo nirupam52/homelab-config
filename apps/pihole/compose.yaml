@@ -9,6 +9,9 @@ services:
       FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD:?Set PIHOLE_WEBPASSWORD in .env}
       FTLCONF_webserver_port: "80"
       FTLCONF_dns_listeningMode: ALL
+    ports:
+      - "${TAILSCALE_IPV4:?Set TAILSCALE_IPV4 in .env}:53:53/udp"
+      - "${TAILSCALE_IPV4:?Set TAILSCALE_IPV4 in .env}:53:53/tcp"
     volumes:
       - /mnt/ssd/homelab/apps/pihole/data:/etc/pihole
       - /mnt/ssd/homelab/apps/pihole/dnsmasq.d:/etc/dnsmasq.d
@@ -17,7 +20,3 @@ services:
       - "docktail.service.name=pihole"
       - "docktail.service.port=80"
       - "docktail.service.service-port=443"
-      - "docktail.service.1.name=pihole-dns"
-      - "docktail.service.1.port=53"
-      - "docktail.service.1.protocol=tcp"
-      - "docktail.service.1.service-port=53"
