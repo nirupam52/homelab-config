@@ -56,14 +56,70 @@ Prepare an already-formatted SSD partition with a filesystem UUID. The script
 will never format a disk. Keep a local keyboard/monitor available for the
 first run because system SSH is disabled after Tailscale SSH is confirmed.
 
+## GitHub deploy key
+
+The Pi clones this repository over SSH with a repository-specific, read-only
+deploy key. Generate the key as the normal Pi user:
+
+```sh
+install -d -m 700 ~/.ssh
+ssh-keygen -t ed25519 -f ~/.ssh/homelab-config-deploy \
+  -C "rpi5 homelab deploy key"
+```
+
+Add the public key in the repository's GitHub settings:
+
+1. Open **Settings -> Deploy keys -> Add deploy key**.
+2. Give it a name such as `rpi5-homelab`.
+3. Paste the output of:
+   ```sh
+   cat ~/.ssh/homelab-config-deploy.pub
+   ```
+4. Leave **Allow write access** disabled. Pull access is sufficient.
+
+Use a host alias so this deploy key is not offered to unrelated GitHub
+repositories:
+
+```sh
+cat >> ~/.ssh/config <<'EOF'
+Host github-homelab
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/homelab-config-deploy
+    IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config
+```
+
+If the key has a passphrase, load it before cloning or pulling:
+
+```sh
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/homelab-config-deploy
+```
+
+Test the connection. On the first connection, verify GitHub's published SSH
+host fingerprint before accepting it:
+
+```sh
+ssh -T github-homelab
+```
+
 ## First setup
 
 Clone this repository on the Pi and run the script as root:
 
 ```sh
-git clone https://github.com/nirupam52/homelab-config.git ~/homelab-config
+git clone git@github-homelab:nirupam52/homelab-config.git ~/homelab-config
 cd ~/homelab-config
 sudo ./setup.sh
+```
+
+For an existing HTTPS checkout, change its remote once:
+
+```sh
+cd ~/homelab-config
+git remote set-url origin git@github-homelab:nirupam52/homelab-config.git
 ```
 
 The guided prompts request:
