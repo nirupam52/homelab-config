@@ -19,6 +19,8 @@ Tailscale.
 - Application Compose files publish no host ports except Pi-hole DNS.
 - Pi-hole binds UDP and TCP port 53 only to the host's Tailscale IPv4 address;
   DockTail publishes the remaining private application services.
+- `apps/llama-cpp/compose.yaml` runs one CPU-only llama.cpp server.
+- llama.cpp model files live on the SSD and are never stored in Git.
 - No Tailscale sidecars or Tailscale Serve files are used.
 
 DockTail needs read-only access to the Docker socket and the host Tailscale
@@ -51,7 +53,7 @@ In the Tailscale admin console:
   "grants": [
     {
       "src": ["autogroup:member"],
-      "dst": ["svc:dozzle", "svc:pihole"],
+      "dst": ["svc:dozzle", "svc:pihole", "svc:llama"],
       "ip": ["443"]
     }
   ],
@@ -72,6 +74,20 @@ In the Tailscale admin console:
 Prepare an already-formatted SSD partition with a filesystem UUID. The script
 will never format a disk. Keep a local keyboard/monitor available for the
 first run because system SSH is disabled after Tailscale SSH is confirmed.
+
+For llama.cpp, stage one verified GGUF model after the SSD is mounted:
+
+```sh
+sudo install -d -m 0750 /mnt/ssd/homelab/apps/llama-cpp/models
+sudo install -m 0644 /path/to/model.gguf \
+  /mnt/ssd/homelab/apps/llama-cpp/models/
+sha256sum /mnt/ssd/homelab/apps/llama-cpp/models/model.gguf
+```
+
+Use the exact filename and checksum from the model publisher. The first setup
+pass may create the SSD directory and stop with a missing-model error before
+Dozzle starts; stage the model, then run `sudo ./setup.sh reconcile` to
+resume reconciling every application, not just llama.cpp.
 
 ## GitHub deploy key
 
@@ -146,9 +162,12 @@ The guided prompts request, in order:
    before system SSH is disabled.
 3. The Tailscale OAuth client ID and secret.
 4. A Pi-hole web password.
+5. The llama.cpp model filename and API key.
 
-Prompts 3 and 4 only appear the first time, or after their runtime `.env`
-file is removed; reruns keep the existing values.
+Prompts 3, 4, and 5 only appear the first time, or after their runtime `.env`
+file is removed; reruns keep the existing values. The model filename must match
+a file in `/mnt/ssd/homelab/apps/llama-cpp/models/`; runtime `.env` files are
+created on the SSD with mode `600`.
 
 The script then installs Docker, Compose, UFW, the `en_US.UTF-8` locale, and
 unattended upgrades; mounts the SSD; moves Docker's data root; connects
@@ -165,17 +184,19 @@ is the `bootstrap` phase.
 Finally it reconciles applications (the `reconcile` phase): it mirrors each
 Compose file onto the SSD, collects any missing secret, refreshes the
 Pi-hole `.env`'s Tailscale address, and starts or updates DockTail, Pi-hole,
-and Dozzle. It never formats the SSD or removes application data and Compose
-volumes. It does overwrite the mirrored Compose files (mode `0644`); existing
-`.env` secret values are preserved and those files stay mode `600`.
+llama.cpp, and Dozzle. It never formats the SSD or removes application data,
+models, and Compose volumes. It does overwrite the mirrored Compose files
+(mode `0644`); existing `.env` secret values are preserved and those files
+stay mode `600`.
 
 After the first run, prefer the narrower modes for routine changes:
 `reconcile` for changes under `apps/` or `infra/`, `reconcile <project>`
-(`docktail`, `pihole`, or `dozzle`) for a single application, and `bootstrap`
-for changes to `docker/daemon.json`, the firewall, or the Tailscale flags.
-See **Verify and update** below for the exact commands. `reconcile` fails
-fast if bootstrap has never completed: it requires the SSD mounted at
-`/mnt/ssd`, Docker's data root on the SSD, and a connected Tailscale daemon.
+(`docktail`, `pihole`, `llama-cpp`, or `dozzle`) for a single application, and
+`bootstrap` for changes to `docker/daemon.json`, the firewall, or the Tailscale
+flags. `llama-cpp` is included when `reconcile` runs without a project. See
+**Verify and update** below for the exact commands. `reconcile` fails fast if
+bootstrap has never completed: it requires the SSD mounted at `/mnt/ssd`,
+Docker's data root on the SSD, and a connected Tailscale daemon.
 
 Reboot once after the first run so the device-tree radio overlays take effect:
 
@@ -189,6 +210,7 @@ After DockTail creates the Service definitions and Tailscale approves the
 advertised hosts, the usual URLs are:
 
 - `https://dozzle.<tailnet>.ts.net`
+- `https://llama.<tailnet>.ts.net`
 - `https://pihole.<tailnet>.ts.net/admin/`
 
 `tailscale serve status` only reports the host's local advertisement. It does
@@ -234,6 +256,42 @@ DockTail watches the labels in the application Compose files. Adding an app
 means adding another labeled Compose project; do not add a Tailscale sidecar or
 host port publication. Do not add `docktail.funnel.*` labels: nothing is public.
 
+## llama.cpp
+
+llama.cpp is a CPU-only, OpenAI-compatible inference server for this Pi. Its
+container listens on port `8080` internally; DockTail publishes it as the
+private Tailscale Service `llama` on HTTPS port `443`. No host port is
+published.
+
+The server requires:
+
+- One explicitly selected `.gguf` model in
+  `/mnt/ssd/homelab/apps/llama-cpp/models/`.
+- The model filename and API key in
+  `/mnt/ssd/homelab/apps/llama-cpp/.env`.
+- A client using `Authorization: Bearer <LLAMA_API_KEY>`.
+
+The initial defaults are a 4096-token context, four CPU threads, and one
+parallel request slot. Benchmark the selected model before increasing these
+values. Edit the runtime `.env` and run `sudo ./setup.sh reconcile llama-cpp` to
+change them.
+
+Test the service from a Tailscale client:
+
+```sh
+LLAMA_URL=https://llama.<tailnet>.ts.net
+LLAMA_API_KEY='value from /mnt/ssd/homelab/apps/llama-cpp/.env'
+curl --fail "$LLAMA_URL/health"
+curl --fail \
+  -H "Authorization: Bearer $LLAMA_API_KEY" \
+  -H "Content-Type: application/json" \
+  "$LLAMA_URL/v1/chat/completions" \
+  -d '{"model":"local-model","messages":[{"role":"user","content":"Reply with one word: ready"}],"max_tokens":8}'
+```
+
+The API is reachable only through Tailscale. Do not add a host port, Funnel
+label, or llama.cpp tools/MCP configuration.
+
 ## Tailnet-wide DNS
 
 The setup script records the Pi's Tailscale IPv4 address in
@@ -270,12 +328,15 @@ SSD: /mnt/ssd
 ├── docker/                  Docker data root
 └── homelab/
     ├── apps/dozzle/compose.yaml
+    ├── apps/llama-cpp/compose.yaml
+    ├── apps/llama-cpp/.env     Model filename, API key, and tuning
+    ├── apps/llama-cpp/models/  GGUF model files
     ├── apps/pihole/compose.yaml
-    ├── apps/pihole/.env     Pi-hole password and Tailscale address
-    ├── apps/pihole/data/    Pi-hole data
+    ├── apps/pihole/.env        Pi-hole password and Tailscale address
+    ├── apps/pihole/data/       Pi-hole data
     ├── apps/pihole/dnsmasq.d/
     ├── infra/docktail/compose.yaml
-    └── infra/docktail/.env DockTail OAuth secret
+    └── infra/docktail/.env     DockTail OAuth secret
 ```
 
 ## Verify and update
@@ -291,14 +352,15 @@ docker compose --env-file /mnt/ssd/homelab/infra/docktail/.env \
   -f /mnt/ssd/homelab/infra/docktail/compose.yaml ps
 docker compose --env-file /mnt/ssd/homelab/apps/pihole/.env \
   -f /mnt/ssd/homelab/apps/pihole/compose.yaml ps
+docker compose --env-file /mnt/ssd/homelab/apps/llama-cpp/.env \
+  -f /mnt/ssd/homelab/apps/llama-cpp/compose.yaml ps
 docker compose -f /mnt/ssd/homelab/apps/dozzle/compose.yaml ps
 ```
 
 The firewall defaults to deny incoming and allow outgoing, with an inbound
 allow only on `tailscale0`. Pi-hole is expected to be the only container with
-published host ports, and its `docker ps` entry should show the configured
-Tailscale IPv4 address mapped to both UDP and TCP port 53. Check the Tailscale
-admin console if a DockTail service is pending approval.
+published host ports. llama.cpp should show no published ports. Check the
+Tailscale admin console if a DockTail Service is pending approval.
 
 From a Tailscale client, test both DNS transports:
 
@@ -326,6 +388,12 @@ sudo ./setup.sh             # unsure, or both kinds of change
 `docker compose up -d` reconciles changed images and configuration without
 removing application data. Do not run `docker compose down -v`.
 
+To replace a model, copy the new verified `.gguf` file into the models
+directory, update `LLAMA_MODEL` in the runtime `.env`, and run
+`sudo ./setup.sh reconcile llama-cpp`.
+Keep the old model until the new service passes `/health` and an inference
+smoke test.
+
 ## Recovery trade-off
 
 System `sshd` is disabled. If Tailscale is unavailable, remote recovery is not
@@ -337,3 +405,4 @@ sudo systemctl enable --now ssh.service
 ```
 
 Do not disable the firewall or re-enable wireless services as a routine fix.
+

@@ -14,6 +14,8 @@ SECRET_VALUE=
 TAILSCALE_IPV4=
 MODE=full
 PROJECT=
+LLAMA_ENV=$HOMELAB_ROOT/apps/llama-cpp/.env
+LLAMA_MODELS=$HOMELAB_ROOT/apps/llama-cpp/models
 
 fail() {
     printf 'setup: %s\n' "$1" >&2
@@ -32,8 +34,8 @@ root, Tailscale connection, boot overlays, firewall, disabled services). It
 never formats a disk. Idempotent but rarely needed once a host is set up.
 
 reconcile [project]: syncs Compose files and secrets, then starts or updates
-containers. project is one of: docktail, pihole, dozzle. Omit it to
-reconcile all three. Fails fast if bootstrap has never completed.
+containers. project is one of: docktail, pihole, llama-cpp, dozzle. Omit it to
+reconcile all four. Fails fast if bootstrap has never completed.
 EOF
 }
 
@@ -147,6 +149,7 @@ mount_ssd() {
     mountpoint -q "$SSD_MOUNT" || fail "$SSD_MOUNT is not mounted"
     mkdir -p "$HOMELAB_ROOT/apps/pihole/data" \
         "$HOMELAB_ROOT/apps/pihole/dnsmasq.d" \
+        "$HOMELAB_ROOT/apps/llama-cpp/models" \
         "$HOMELAB_ROOT/infra/docktail"
 }
 
@@ -283,6 +286,32 @@ ensure_pihole_secret() {
     chmod 600 "$PIHOLE_ENV"
 }
 
+ensure_llama_secret() {
+    if [ ! -f "$LLAMA_ENV" ]; then
+        ask 'llama.cpp model filename' ''
+        case "$ANSWER" in
+            ''|*[!A-Za-z0-9._-]*) fail 'llama.cpp model filename must use only letters, numbers, dots, underscores, and dashes' ;;
+        esac
+        [ -f "$LLAMA_MODELS/$ANSWER" ] || \
+            fail "llama.cpp model not found: $LLAMA_MODELS/$ANSWER"
+        LLAMA_MODEL=$ANSWER
+        ask_secret 'llama.cpp API key'
+        [ -n "$SECRET_VALUE" ] || fail 'llama.cpp API key cannot be empty'
+        printf 'LLAMA_MODEL=%s\nLLAMA_API_KEY=%s\n' \
+            "$LLAMA_MODEL" "$SECRET_VALUE" > "$LLAMA_ENV"
+    fi
+
+    LLAMA_MODEL=$(sed -n 's/^LLAMA_MODEL=//p' "$LLAMA_ENV")
+    case "$LLAMA_MODEL" in
+        ''|*[!A-Za-z0-9._-]*) fail 'LLAMA_MODEL in the llama.cpp .env must be a model filename' ;;
+    esac
+    [ -f "$LLAMA_MODELS/$LLAMA_MODEL" ] || \
+        fail "llama.cpp model not found: $LLAMA_MODELS/$LLAMA_MODEL"
+    grep -Eq '^LLAMA_API_KEY=.+$' "$LLAMA_ENV" || \
+        fail 'LLAMA_API_KEY is missing from the llama.cpp .env'
+    chmod 600 "$LLAMA_ENV"
+}
+
 compose_up() {
     name=$1
     compose_file=$2
@@ -309,12 +338,17 @@ reconcile_project() {
             ensure_pihole_secret
             compose_up pihole "$HOMELAB_ROOT/apps/pihole/compose.yaml" "$PIHOLE_ENV"
             ;;
+        llama-cpp)
+            sync_compose "$REPO_ROOT/apps/llama-cpp/compose.yaml" "$HOMELAB_ROOT/apps/llama-cpp/compose.yaml"
+            ensure_llama_secret
+            compose_up llama-cpp "$HOMELAB_ROOT/apps/llama-cpp/compose.yaml" "$LLAMA_ENV"
+            ;;
         dozzle)
             sync_compose "$REPO_ROOT/apps/dozzle/compose.yaml" "$HOMELAB_ROOT/apps/dozzle/compose.yaml"
             compose_up dozzle "$HOMELAB_ROOT/apps/dozzle/compose.yaml" ''
             ;;
         *)
-            fail "unknown project '$1' (expected docktail, pihole, or dozzle)"
+            fail "unknown project '$1' (expected docktail, pihole, llama-cpp, or dozzle)"
             ;;
     esac
 }
@@ -322,6 +356,7 @@ reconcile_project() {
 reconcile_all() {
     reconcile_project docktail
     reconcile_project pihole
+    reconcile_project llama-cpp
     reconcile_project dozzle
 }
 
