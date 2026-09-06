@@ -152,7 +152,7 @@ Bluetooth boot overlays; configures the firewall; disables system SSH,
 Avahi, triggerhappy, and Bluetooth; connects Tailscale with:
 
 ```sh
-tailscale up --ssh --accept-dns=false --advertise-tags=tag:server
+tailscale up --accept-dns=false --advertise-tags=tag:server --ssh --accept-routes
 ```
 
 Finally it starts DockTail, Pi-hole, and Dozzle. Run it again after a reboot or

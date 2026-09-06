@@ -177,7 +177,7 @@ configure_tailscale() {
     fi
     systemctl enable --now tailscaled
 
-    tailscale up --ssh --accept-dns=false --advertise-tags=tag:server
+    tailscale up --accept-dns=false --advertise-tags=tag:server --ssh --accept-routes
     TAILSCALE_IPV4=$(tailscale ip -4) || fail 'Tailscale is not connected'
     [ -n "$TAILSCALE_IPV4" ] || fail 'Tailscale IPv4 address is empty'
 }
