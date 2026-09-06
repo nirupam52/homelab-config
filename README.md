@@ -44,6 +44,18 @@ In the Tailscale admin console:
       "tag:container": ["tag:server"]
     }
   },
+  "grants": [
+    {
+      "src": ["autogroup:member"],
+      "dst": ["svc:dozzle", "svc:pihole"],
+      "ip": ["443"]
+    },
+    {
+      "src": ["autogroup:member"],
+      "dst": ["svc:pihole-dns"],
+      "ip": ["53"]
+    }
+  ],
   "acls": [
     {"action": "accept", "src": ["autogroup:member"], "dst": ["tag:server:*"]}
   ],
@@ -165,6 +177,13 @@ advertised hosts, the usual URLs are:
 `tailscale serve status` only reports the host's local advertisement. It does
 not prove that the Service definition exists in the tailnet control plane.
 
+If a Service exists but shows `Hosts: 0`, its host advertisement is not
+approved yet. Open the Service in the Tailscale admin console, approve the
+pending `homelabpi` host under Service hosts, and wait for the host count to
+become `1`. A browser connection will time out until that approval completes.
+If no pending host is listed, recheck the `autoApprovers.services` rule and
+recreate DockTail to advertise the host again.
+
 If the URLs appear locally but the Services page is empty, inspect DockTail's
 control-plane errors:
 
@@ -178,13 +197,14 @@ An error such as `requested tags [tag:container] are invalid or not
 permitted` means the `tag:container` and `autoApprovers.services` policy above
 has not been applied.
 
-After fixing the OAuth permission or tailnet policy, restart DockTail so it
-re-advertises the services:
+After fixing the OAuth credentials or tailnet policy, recreate DockTail so it
+reloads the `.env` file and re-advertises the services. `docker compose
+restart` does not reload changed environment values:
 
 ```sh
 docker compose --project-name docktail \
   --env-file /mnt/ssd/homelab/infra/docktail/.env \
-  -f /mnt/ssd/homelab/infra/docktail/compose.yaml restart docktail
+  -f /mnt/ssd/homelab/infra/docktail/compose.yaml up -d --force-recreate docktail
 ```
 
 Pi-hole also advertises `pihole-dns` through DockTail as TCP port 53. Tailscale
