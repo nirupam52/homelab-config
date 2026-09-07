@@ -7,7 +7,10 @@ Tailscale.
 
 ## Design
 
-- `setup.sh` is the only host setup and deployment entrypoint.
+- `setup.sh` is the only host setup and deployment entrypoint. It has three
+  modes: no argument runs bootstrap then reconcile; `bootstrap` applies
+  host-level state only; `reconcile [project]` syncs Compose files and
+  secrets and starts or updates one application or all of them.
 - The SSD is mounted at `/mnt/ssd` by UUID.
 - Docker stores images and containers in `/mnt/ssd/docker`.
 - Application data and runtime secrets live under `/mnt/ssd/homelab/`.
@@ -136,30 +139,43 @@ cd ~/homelab-config
 git remote set-url origin git@github-homelab:nirupam52/homelab-config.git
 ```
 
-The guided prompts request:
+The guided prompts request, in order:
 
 1. The SSD partition, such as `/dev/sda1`.
-2. The Tailscale OAuth client ID and secret.
-3. A Pi-hole web password.
-4. Confirmation that Tailscale SSH works from another tailnet device.
+2. Confirmation that Tailscale SSH works from another tailnet device, asked
+   before system SSH is disabled.
+3. The Tailscale OAuth client ID and secret.
+4. A Pi-hole web password.
 
-The script records the Pi's Tailscale IPv4 address in the runtime Pi-hole
-`.env` file for the DNS port binding.
+Prompts 3 and 4 only appear the first time, or after their runtime `.env`
+file is removed; reruns keep the existing values.
 
 The script then installs Docker, Compose, UFW, the `en_US.UTF-8` locale, and
-unattended upgrades; mounts the SSD; moves Docker's data root; applies the
-Wi-Fi and Bluetooth boot overlays; configures the firewall; disables system SSH,
-Avahi, triggerhappy, and Bluetooth; connects Tailscale with:
+unattended upgrades; mounts the SSD; moves Docker's data root; connects
+Tailscale with:
 
 ```sh
 tailscale up --accept-dns=false --advertise-tags=tag:server --ssh --accept-routes
 ```
 
-Finally it starts DockTail, Pi-hole, and Dozzle. Run it again after a reboot or
-repository update to reconcile the same configuration. It never formats the
-SSD or removes application data and Compose volumes. It does reapply host
-settings and overwrite the mirrored Compose files; existing runtime secret
-values are preserved and files remain mode `600`.
+It then applies the Wi-Fi and Bluetooth boot overlays, configures the
+firewall, and disables system SSH, Avahi, triggerhappy, and Bluetooth. That
+is the `bootstrap` phase.
+
+Finally it reconciles applications (the `reconcile` phase): it mirrors each
+Compose file onto the SSD, collects any missing secret, refreshes the
+Pi-hole `.env`'s Tailscale address, and starts or updates DockTail, Pi-hole,
+and Dozzle. It never formats the SSD or removes application data and Compose
+volumes. It does overwrite the mirrored Compose files (mode `0644`); existing
+`.env` secret values are preserved and those files stay mode `600`.
+
+After the first run, prefer the narrower modes for routine changes:
+`reconcile` for changes under `apps/` or `infra/`, `reconcile <project>`
+(`docktail`, `pihole`, or `dozzle`) for a single application, and `bootstrap`
+for changes to `docker/daemon.json`, the firewall, or the Tailscale flags.
+See **Verify and update** below for the exact commands. `reconcile` fails
+fast if bootstrap has never completed: it requires the SSD mounted at
+`/mnt/ssd`, Docker's data root on the SSD, and a connected Tailscale daemon.
 
 Reboot once after the first run so the device-tree radio overlays take effect:
 
@@ -296,12 +312,15 @@ Then confirm the queries appear in Pi-hole's **Query Log**. If they do not,
 the client is not using Tailscale DNS or is bypassing it with DoH, DoT, a VPN,
 or a private relay.
 
-For an update, review the repository change and run the same setup command:
+For an update, review the repository change, pull it, then run the mode that
+matches the change:
 
 ```sh
 cd ~/homelab-config
 git pull --ff-only
-sudo ./setup.sh
+sudo ./setup.sh reconcile   # apps/ or infra/ changed (Compose files, secrets)
+sudo ./setup.sh bootstrap   # docker/, firewall, or Tailscale flags changed
+sudo ./setup.sh             # unsure, or both kinds of change
 ```
 
 `docker compose up -d` reconciles changed images and configuration without

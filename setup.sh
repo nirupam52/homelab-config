@@ -7,8 +7,13 @@ export LC_ALL
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SSD_MOUNT=/mnt/ssd
 HOMELAB_ROOT=$SSD_MOUNT/homelab
+DOCKTAIL_ENV=$HOMELAB_ROOT/infra/docktail/.env
+PIHOLE_ENV=$HOMELAB_ROOT/apps/pihole/.env
 BOOT_CONFIG=
 SECRET_VALUE=
+TAILSCALE_IPV4=
+MODE=full
+PROJECT=
 
 fail() {
     printf 'setup: %s\n' "$1" >&2
@@ -17,16 +22,26 @@ fail() {
 
 usage() {
     cat <<'EOF'
-Usage: sudo ./setup.sh
+Usage: sudo ./setup.sh [bootstrap|reconcile [project]]
 
-Guides a Raspberry Pi OS Lite host through the one-time host setup and can be
-run again to reconcile the same configuration. It never formats a disk.
+No argument: runs bootstrap then reconcile. Use for the first run, after a
+reboot, or when unsure which mode a change needs.
+
+bootstrap: applies host-level state only (packages, SSD mount, Docker data
+root, Tailscale connection, boot overlays, firewall, disabled services). It
+never formats a disk. Idempotent but rarely needed once a host is set up.
+
+reconcile [project]: syncs Compose files and secrets, then starts or updates
+containers. project is one of: docktail, pihole, dozzle. Omit it to
+reconcile all three. Fails fast if bootstrap has never completed.
 EOF
 }
 
 case "${1:-}" in
-    "") ;;
-    -h|--help) usage; exit 0 ;;
+    "") [ $# -eq 0 ] || { usage >&2; exit 2; } ;;
+    -h|--help) [ $# -eq 1 ] || { usage >&2; exit 2; }; usage; exit 0 ;;
+    bootstrap) [ $# -eq 1 ] || { usage >&2; exit 2; }; MODE=bootstrap ;;
+    reconcile) [ $# -le 2 ] || { usage >&2; exit 2; }; MODE=reconcile; PROJECT=${2:-} ;;
     *) usage >&2; exit 2 ;;
 esac
 
@@ -52,46 +67,23 @@ ask_secret() {
     printf '\n' >&2
 }
 
-install_docker_repository() {
-    DOCKER_KEYRING=${1:-/etc/apt/keyrings/docker.asc}
-    DOCKER_SOURCES=${2:-/etc/apt/sources.list.d/docker.sources}
-    . /etc/os-release
-    case "${ID:-}:${ID_LIKE:-}" in
-        debian:*|raspbian:*|*:debian*) DOCKER_REPO_OS=debian ;;
-        ubuntu:*|*:ubuntu*) DOCKER_REPO_OS=ubuntu ;;
-        *) fail "Docker Compose v2 is unavailable for ${ID:-unknown}" ;;
-    esac
-
-    DOCKER_SUITE=${VERSION_CODENAME:-}
-    [ -n "$DOCKER_SUITE" ] || fail 'Docker repository codename was not found'
-    need dpkg
-    DOCKER_ARCH=$(dpkg --print-architecture)
-    case "$DOCKER_ARCH" in
-        amd64|arm64|armhf|ppc64el|s390x) ;;
-        *) fail "Docker repository does not support architecture $DOCKER_ARCH" ;;
-    esac
-
-    DOCKER_KEYRING_DIR=${DOCKER_KEYRING%/*}
-    DOCKER_SOURCES_DIR=${DOCKER_SOURCES%/*}
-    install -m 0755 -d "$DOCKER_KEYRING_DIR" "$DOCKER_SOURCES_DIR"
-    curl -fsSL "https://download.docker.com/linux/$DOCKER_REPO_OS/gpg" \
-        -o "$DOCKER_KEYRING"
-    chmod a+r "$DOCKER_KEYRING"
-    cat > "$DOCKER_SOURCES" <<EOF
-Types: deb
-URIs: https://download.docker.com/linux/$DOCKER_REPO_OS
-Suites: $DOCKER_SUITE
-Components: stable
-Architectures: $DOCKER_ARCH
-Signed-By: $DOCKER_KEYRING
-EOF
-    apt-get update
-}
-
 install_packages() {
     printf '%s\n' '== Install host packages =='
+    need dpkg
+    REQUIRED_PACKAGES='ca-certificates curl docker.io ufw unattended-upgrades locales'
+    NEED_INSTALL=0
+    for pkg in $REQUIRED_PACKAGES; do
+        dpkg -s "$pkg" >/dev/null 2>&1 || NEED_INSTALL=1
+    done
+    docker compose version >/dev/null 2>&1 || NEED_INSTALL=1
+
+    if [ "$NEED_INSTALL" -eq 0 ]; then
+        printf '%s\n' 'Required packages already installed; skipping apt-get.'
+        return 0
+    fi
+
     apt-get update
-    apt-get install -y ca-certificates curl docker.io ufw unattended-upgrades locales
+    apt-get install -y $REQUIRED_PACKAGES
 
     if ! docker compose version >/dev/null 2>&1; then
         if ! apt-get install -y docker-compose-v2 >/dev/null 2>&1 || \
@@ -105,9 +97,12 @@ install_packages() {
 
 configure_locale() {
     printf '%s\n' '== Configure system locale =='
-    locale-gen en_US.UTF-8
-    if ! LANG=C LC_ALL=C locale -a | grep -Eiq '^en_US\.(utf8|UTF-8)$'; then
-        fail 'en_US.UTF-8 locale was not generated'
+    if LANG=C LC_ALL=C locale -a | grep -Eiq '^en_US\.(utf8|UTF-8)$'; then
+        printf '%s\n' 'en_US.UTF-8 already generated; skipping locale-gen.'
+    else
+        locale-gen en_US.UTF-8
+        LANG=C LC_ALL=C locale -a | grep -Eiq '^en_US\.(utf8|UTF-8)$' || \
+            fail 'en_US.UTF-8 locale was not generated'
     fi
     LANG=C LC_ALL=C update-locale LANG=en_US.UTF-8
 }
@@ -119,7 +114,6 @@ sync_compose() {
         install -D -m 0644 "$source" "$destination"
     fi
 }
-
 
 mount_ssd() {
     printf '%s\n' '== Mount SSD =='
@@ -154,9 +148,6 @@ mount_ssd() {
     mkdir -p "$HOMELAB_ROOT/apps/pihole/data" \
         "$HOMELAB_ROOT/apps/pihole/dnsmasq.d" \
         "$HOMELAB_ROOT/infra/docktail"
-    sync_compose "$REPO_ROOT/infra/docktail/compose.yaml" "$HOMELAB_ROOT/infra/docktail/compose.yaml"
-    sync_compose "$REPO_ROOT/apps/pihole/compose.yaml" "$HOMELAB_ROOT/apps/pihole/compose.yaml"
-    sync_compose "$REPO_ROOT/apps/dozzle/compose.yaml" "$HOMELAB_ROOT/apps/dozzle/compose.yaml"
 }
 
 configure_docker() {
@@ -187,6 +178,10 @@ configure_tailscale() {
     systemctl enable --now tailscaled
 
     tailscale up --accept-dns=false --advertise-tags=tag:server --ssh --accept-routes
+    tailscale_ipv4
+}
+
+tailscale_ipv4() {
     TAILSCALE_IPV4=$(tailscale ip -4) || fail 'Tailscale is not connected'
     [ -n "$TAILSCALE_IPV4" ] || fail 'Tailscale IPv4 address is empty'
 }
@@ -259,11 +254,7 @@ configure_services() {
     systemctl enable --now apt-daily-upgrade.timer
 }
 
-configure_secrets() {
-    printf '%s\n' '== Configure DockTail and Pi-hole secrets =='
-    DOCKTAIL_ENV=$HOMELAB_ROOT/infra/docktail/.env
-    PIHOLE_ENV=$HOMELAB_ROOT/apps/pihole/.env
-
+ensure_docktail_secret() {
     if [ ! -f "$DOCKTAIL_ENV" ]; then
         ask 'Tailscale OAuth client ID' ''
         [ -n "$ANSWER" ] || fail 'OAuth client ID cannot be empty'
@@ -275,7 +266,10 @@ configure_secrets() {
             "$DOCKTAIL_CLIENT_ID" "$DOCKTAIL_CLIENT_SECRET" > "$DOCKTAIL_ENV"
     fi
     chmod 600 "$DOCKTAIL_ENV"
+}
 
+ensure_pihole_secret() {
+    tailscale_ipv4
     if [ ! -f "$PIHOLE_ENV" ]; then
         ask_secret 'Pi-hole web password'
         [ -n "$SECRET_VALUE" ] || fail 'Pi-hole web password cannot be empty'
@@ -289,34 +283,91 @@ configure_secrets() {
     chmod 600 "$PIHOLE_ENV"
 }
 
-start_stack() {
-    printf '%s\n' '== Start DockTail and applications =='
-    docker compose --project-name docktail --env-file "$DOCKTAIL_ENV" \
-        -f "$HOMELAB_ROOT/infra/docktail/compose.yaml" config --quiet
-    docker compose --project-name docktail --env-file "$DOCKTAIL_ENV" \
-        -f "$HOMELAB_ROOT/infra/docktail/compose.yaml" up -d
-
-    docker compose --project-name pihole --env-file "$PIHOLE_ENV" \
-        -f "$HOMELAB_ROOT/apps/pihole/compose.yaml" config --quiet
-    docker compose --project-name pihole --env-file "$PIHOLE_ENV" \
-        -f "$HOMELAB_ROOT/apps/pihole/compose.yaml" up -d
-
-    docker compose --project-name dozzle \
-        -f "$HOMELAB_ROOT/apps/dozzle/compose.yaml" config --quiet
-    docker compose --project-name dozzle \
-        -f "$HOMELAB_ROOT/apps/dozzle/compose.yaml" up -d
+compose_up() {
+    name=$1
+    compose_file=$2
+    env_file=$3
+    if [ -n "$env_file" ]; then
+        set -- --project-name "$name" --env-file "$env_file" -f "$compose_file"
+    else
+        set -- --project-name "$name" -f "$compose_file"
+    fi
+    docker compose "$@" config --quiet
+    docker compose "$@" up -d
 }
 
-install_packages
-configure_locale
-mount_ssd
-configure_docker
-configure_tailscale
-configure_boot
-configure_firewall
-configure_services
-configure_secrets
-start_stack
+reconcile_project() {
+    printf '== Reconcile %s ==\n' "$1"
+    case "$1" in
+        docktail)
+            sync_compose "$REPO_ROOT/infra/docktail/compose.yaml" "$HOMELAB_ROOT/infra/docktail/compose.yaml"
+            ensure_docktail_secret
+            compose_up docktail "$HOMELAB_ROOT/infra/docktail/compose.yaml" "$DOCKTAIL_ENV"
+            ;;
+        pihole)
+            sync_compose "$REPO_ROOT/apps/pihole/compose.yaml" "$HOMELAB_ROOT/apps/pihole/compose.yaml"
+            ensure_pihole_secret
+            compose_up pihole "$HOMELAB_ROOT/apps/pihole/compose.yaml" "$PIHOLE_ENV"
+            ;;
+        dozzle)
+            sync_compose "$REPO_ROOT/apps/dozzle/compose.yaml" "$HOMELAB_ROOT/apps/dozzle/compose.yaml"
+            compose_up dozzle "$HOMELAB_ROOT/apps/dozzle/compose.yaml" ''
+            ;;
+        *)
+            fail "unknown project '$1' (expected docktail, pihole, or dozzle)"
+            ;;
+    esac
+}
+
+reconcile_all() {
+    reconcile_project docktail
+    reconcile_project pihole
+    reconcile_project dozzle
+}
+
+require_bootstrapped() {
+    mountpoint -q "$SSD_MOUNT" || \
+        fail "$SSD_MOUNT is not mounted; run 'sudo ./setup.sh bootstrap' first"
+    DOCKER_ROOT=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null) || DOCKER_ROOT=
+    [ "$DOCKER_ROOT" = "$SSD_MOUNT/docker" ] || \
+        fail "Docker data root is not $SSD_MOUNT/docker; run 'sudo ./setup.sh bootstrap' first"
+    systemctl is-active --quiet tailscaled || \
+        fail "Tailscale is not running; run 'sudo ./setup.sh bootstrap' first"
+    tailscale_ipv4
+}
+
+run_bootstrap() {
+    install_packages
+    configure_locale
+    mount_ssd
+    configure_docker
+    configure_tailscale
+    configure_boot
+    configure_firewall
+    configure_services
+}
+
+case "$MODE" in
+    full)
+        run_bootstrap
+        reconcile_all
+        ;;
+    bootstrap)
+        run_bootstrap
+        ;;
+    reconcile)
+        require_bootstrapped
+        if [ -n "$PROJECT" ]; then
+            reconcile_project "$PROJECT"
+        else
+            reconcile_all
+        fi
+        ;;
+esac
 
 printf '%s\n' '' 'Setup complete.'
-printf '%s\n' 'Reboot once to apply the radio overlays, then verify the services in the README.'
+case "$MODE" in
+    full|bootstrap)
+        printf '%s\n' 'Reboot once to apply the radio overlays, then verify the services in the README.'
+        ;;
+esac
