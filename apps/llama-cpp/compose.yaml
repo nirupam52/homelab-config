@@ -1,0 +1,22 @@
+name: llama-cpp
+
+services:
+  llama:
+    image: ghcr.io/ggml-org/llama.cpp:server@sha256:8459c3e6a16f4e1d92fecd0ad8d015169e9f108c1862a366eb44923192b576f8
+    restart: unless-stopped
+    environment:
+      LLAMA_ARG_MODELS_DIR: /models
+      LLAMA_ARG_HOST: 0.0.0.0
+      LLAMA_ARG_PORT: "8080"
+      LLAMA_ARG_CTX_SIZE: ${LLAMA_CTX_SIZE:-4096}
+      LLAMA_ARG_THREADS: ${LLAMA_THREADS:-4}
+      LLAMA_ARG_N_PARALLEL: ${LLAMA_N_PARALLEL:-1}
+      LLAMA_ARG_MODELS_MAX: ${LLAMA_MODELS_MAX:-1}
+      LLAMA_API_KEY: ${LLAMA_API_KEY:?Set LLAMA_API_KEY in .env}
+    volumes:
+      - /mnt/ssd/homelab/apps/llama-cpp/models:/models:ro
+    labels:
+      - "docktail.service.enable=true"
+      - "docktail.service.name=llama"
+      - "docktail.service.port=8080"
+      - "docktail.service.service-port=443"

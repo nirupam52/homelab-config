@@ -4,3 +4,4 @@
 # Runtime service data
 **/data/
 **/dnsmasq.d/
+**/models/
