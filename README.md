@@ -19,7 +19,8 @@ Tailscale.
 - Application Compose files publish no host ports except Pi-hole DNS.
 - Pi-hole binds UDP and TCP port 53 only to the host's Tailscale IPv4 address;
   DockTail publishes the remaining private application services.
-- `apps/llama-cpp/compose.yaml` runs one CPU-only llama.cpp server.
+- `apps/llama-cpp/compose.yaml` runs one CPU-only llama.cpp server in router
+  mode, serving every model found in its models directory.
 - llama.cpp model files live on the SSD and are never stored in Git.
 - No Tailscale sidecars or Tailscale Serve files are used.
 
@@ -75,7 +76,10 @@ Prepare an already-formatted SSD partition with a filesystem UUID. The script
 will never format a disk. Keep a local keyboard/monitor available for the
 first run because system SSH is disabled after Tailscale SSH is confirmed.
 
-For llama.cpp, stage one verified GGUF model after the SSD is mounted:
+For llama.cpp, stage one or more verified GGUF models after the SSD is
+mounted. Single-file models go directly in the directory; multimodal or
+multi-shard models go in their own subdirectory (see the
+[llama.cpp docs](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#model-sources)):
 
 ```sh
 sudo install -d -m 0750 /mnt/ssd/homelab/apps/llama-cpp/models
@@ -85,9 +89,9 @@ sha256sum /mnt/ssd/homelab/apps/llama-cpp/models/model.gguf
 ```
 
 Use the exact filename and checksum from the model publisher. The first setup
-pass may create the SSD directory and stop with a missing-model error before
-Dozzle starts; stage the model, then run `sudo ./setup.sh reconcile` to
-resume reconciling every application, not just llama.cpp.
+pass may create the SSD directory and stop with a no-models error before
+Dozzle starts; stage at least one model, then run `sudo ./setup.sh reconcile`
+to resume reconciling every application, not just llama.cpp.
 
 ## GitHub deploy key
 
@@ -162,12 +166,13 @@ The guided prompts request, in order:
    before system SSH is disabled.
 3. The Tailscale OAuth client ID and secret.
 4. A Pi-hole web password.
-5. The llama.cpp model filename and API key.
+5. The llama.cpp API key.
 
 Prompts 3, 4, and 5 only appear the first time, or after their runtime `.env`
-file is removed; reruns keep the existing values. The model filename must match
-a file in `/mnt/ssd/homelab/apps/llama-cpp/models/`; runtime `.env` files are
-created on the SSD with mode `600`.
+file is removed; reruns keep the existing values. Runtime `.env` files are
+created on the SSD with mode `600`. `reconcile llama-cpp` separately requires
+at least one `.gguf` file already staged in
+`/mnt/ssd/homelab/apps/llama-cpp/models/`.
 
 The script then installs Docker, Compose, UFW, the `en_US.UTF-8` locale, and
 unattended upgrades; mounts the SSD; moves Docker's data root; connects
@@ -258,23 +263,33 @@ host port publication. Do not add `docktail.funnel.*` labels: nothing is public.
 
 ## llama.cpp
 
-llama.cpp is a CPU-only, OpenAI-compatible inference server for this Pi. Its
-container listens on port `8080` internally; DockTail publishes it as the
-private Tailscale Service `llama` on HTTPS port `443`. No host port is
-published.
+llama.cpp runs as a CPU-only, OpenAI-compatible inference server in **router
+mode**: it serves every `.gguf` model found under its models directory and
+loads a model on demand when it is first requested, instead of being fixed to
+one model. Its container listens on port `8080` internally; DockTail
+publishes it as the private Tailscale Service `llama` on HTTPS port `443`. No
+host port is published.
 
 The server requires:
 
-- One explicitly selected `.gguf` model in
-  `/mnt/ssd/homelab/apps/llama-cpp/models/`.
-- The model filename and API key in
-  `/mnt/ssd/homelab/apps/llama-cpp/.env`.
+- One or more `.gguf` models in `/mnt/ssd/homelab/apps/llama-cpp/models/`
+  (a single file per model, or a subdirectory for multimodal/multi-shard
+  models).
+- The API key in `/mnt/ssd/homelab/apps/llama-cpp/.env`.
 - A client using `Authorization: Bearer <LLAMA_API_KEY>`.
 
-The initial defaults are a 4096-token context, four CPU threads, and one
-parallel request slot. Benchmark the selected model before increasing these
-values. Edit the runtime `.env` and run `sudo ./setup.sh reconcile llama-cpp` to
-change them.
+Each model's ID is its filename without the `.gguf` extension (or its
+subdirectory name). Open `https://llama.<tailnet>.ts.net` in a browser to use
+the built-in web UI, which lists the staged models and loads the selected one
+automatically. API clients pick a model the same way, by name, in the
+`"model"` field.
+
+The initial defaults are a 4096-token context, four CPU threads, one parallel
+request slot per model, and at most one model loaded at a time
+(`LLAMA_MODELS_MAX=1`) so a second model is never loaded onto the Pi's limited
+RAM while another is already resident. Benchmark a model before raising
+`LLAMA_MODELS_MAX` or the other defaults. Edit the runtime `.env` and run
+`sudo ./setup.sh reconcile llama-cpp` to change them.
 
 Test the service from a Tailscale client:
 
@@ -282,12 +297,25 @@ Test the service from a Tailscale client:
 LLAMA_URL=https://llama.<tailnet>.ts.net
 LLAMA_API_KEY='value from /mnt/ssd/homelab/apps/llama-cpp/.env'
 curl --fail "$LLAMA_URL/health"
+curl --fail -H "Authorization: Bearer $LLAMA_API_KEY" "$LLAMA_URL/models"
 curl --fail \
   -H "Authorization: Bearer $LLAMA_API_KEY" \
   -H "Content-Type: application/json" \
   "$LLAMA_URL/v1/chat/completions" \
-  -d '{"model":"local-model","messages":[{"role":"user","content":"Reply with one word: ready"}],"max_tokens":8}'
+  -d '{"model":"<id from /models>","messages":[{"role":"user","content":"Reply with one word: ready"}],"max_tokens":8}'
 ```
+
+To add or replace a model, copy the new verified `.gguf` file (or
+subdirectory) into the models directory, then make the router pick it up
+without restarting the container:
+
+```sh
+curl --fail -H "Authorization: Bearer $LLAMA_API_KEY" "$LLAMA_URL/models?reload=1"
+```
+
+Remove an old model the same way: delete it from the models directory, then
+reload. Keep the old model staged until the new one passes the `/health` and
+`/v1/chat/completions` checks above.
 
 The API is reachable only through Tailscale. Do not add a host port, Funnel
 label, or llama.cpp tools/MCP configuration.
@@ -329,8 +357,8 @@ SSD: /mnt/ssd
 └── homelab/
     ├── apps/dozzle/compose.yaml
     ├── apps/llama-cpp/compose.yaml
-    ├── apps/llama-cpp/.env     Model filename, API key, and tuning
-    ├── apps/llama-cpp/models/  GGUF model files
+    ├── apps/llama-cpp/.env     API key and tuning
+    ├── apps/llama-cpp/models/  GGUF model files (one or more)
     ├── apps/pihole/compose.yaml
     ├── apps/pihole/.env        Pi-hole password and Tailscale address
     ├── apps/pihole/data/       Pi-hole data
@@ -387,12 +415,6 @@ sudo ./setup.sh             # unsure, or both kinds of change
 
 `docker compose up -d` reconciles changed images and configuration without
 removing application data. Do not run `docker compose down -v`.
-
-To replace a model, copy the new verified `.gguf` file into the models
-directory, update `LLAMA_MODEL` in the runtime `.env`, and run
-`sudo ./setup.sh reconcile llama-cpp`.
-Keep the old model until the new service passes `/health` and an inference
-smoke test.
 
 ## Recovery trade-off
 

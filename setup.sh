@@ -288,27 +288,14 @@ ensure_pihole_secret() {
 
 ensure_llama_secret() {
     if [ ! -f "$LLAMA_ENV" ]; then
-        ask 'llama.cpp model filename' ''
-        case "$ANSWER" in
-            ''|*[!A-Za-z0-9._-]*) fail 'llama.cpp model filename must use only letters, numbers, dots, underscores, and dashes' ;;
-        esac
-        [ -f "$LLAMA_MODELS/$ANSWER" ] || \
-            fail "llama.cpp model not found: $LLAMA_MODELS/$ANSWER"
-        LLAMA_MODEL=$ANSWER
         ask_secret 'llama.cpp API key'
         [ -n "$SECRET_VALUE" ] || fail 'llama.cpp API key cannot be empty'
-        printf 'LLAMA_MODEL=%s\nLLAMA_API_KEY=%s\n' \
-            "$LLAMA_MODEL" "$SECRET_VALUE" > "$LLAMA_ENV"
+        printf 'LLAMA_API_KEY=%s\n' "$SECRET_VALUE" > "$LLAMA_ENV"
     fi
-
-    LLAMA_MODEL=$(sed -n 's/^LLAMA_MODEL=//p' "$LLAMA_ENV")
-    case "$LLAMA_MODEL" in
-        ''|*[!A-Za-z0-9._-]*) fail 'LLAMA_MODEL in the llama.cpp .env must be a model filename' ;;
-    esac
-    [ -f "$LLAMA_MODELS/$LLAMA_MODEL" ] || \
-        fail "llama.cpp model not found: $LLAMA_MODELS/$LLAMA_MODEL"
     grep -Eq '^LLAMA_API_KEY=.+$' "$LLAMA_ENV" || \
         fail 'LLAMA_API_KEY is missing from the llama.cpp .env'
+    [ -n "$(find "$LLAMA_MODELS" -name '*.gguf' -print -quit)" ] || \
+        fail "no .gguf models found in $LLAMA_MODELS; stage at least one before reconciling llama-cpp"
     chmod 600 "$LLAMA_ENV"
 }
 
