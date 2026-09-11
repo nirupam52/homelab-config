@@ -2,7 +2,7 @@ name: dozzle
 
 services:
   dozzle:
-    image: amir20/dozzle:v10.9.2@sha256:3d16399007c952832fecea05a176f873a3e32604d1805a68930edbea5a81b324
+    image: amir20/dozzle:v11@sha256:fa0eeeee9ce13db388eadb7d88ff33285b0a49cf551640f1fe6d408bf6acc5a7
     command: ["--no-analytics"]
     restart: unless-stopped
     volumes:
