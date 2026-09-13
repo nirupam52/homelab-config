@@ -325,6 +325,7 @@ ensure_hermes_secret() {
     grep -Eq '^HERMES_DASHBOARD_SECRET=.+$' "$HERMES_ENV" || fail "HERMES_DASHBOARD_SECRET is missing from $HERMES_ENV"
     chmod 600 "$HERMES_ENV"
 
+    mkdir -p "$HERMES_DATA"
     if [ ! -f "$HERMES_CONFIG" ]; then
         MODEL_COUNT=$(find "$LLAMA_MODELS" -maxdepth 1 -name '*.gguf' | wc -l | tr -d ' ')
         {
