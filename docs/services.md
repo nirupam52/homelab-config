@@ -7,6 +7,7 @@ advertised host, the usual URLs are:
 |---|---|
 | Dozzle | `https://dozzle.<tailnet>.ts.net` |
 | llama.cpp | `https://llama.<tailnet>.ts.net` |
+| hermes-agent | `https://hermes.<tailnet>.ts.net` |
 | Pi-hole | `https://pihole.<tailnet>.ts.net/admin/` |
 
 ## About DockTail

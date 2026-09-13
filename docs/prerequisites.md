@@ -26,7 +26,7 @@ Complete these before running `setup.sh`.
   "grants": [
     {
       "src": ["autogroup:member"],
-      "dst": ["svc:dozzle", "svc:pihole", "svc:llama"],
+      "dst": ["svc:dozzle", "svc:pihole", "svc:llama", "svc:hermes"],
       "ip": ["443"]
     }
   ],

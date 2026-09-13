@@ -13,6 +13,9 @@ SSD: /mnt/ssd
 ├── docker/                  Docker data root
 └── homelab/
     ├── apps/dozzle/compose.yaml
+    ├── apps/hermes-agent/compose.yaml
+    ├── apps/hermes-agent/.env         Dashboard username/password/secret
+    ├── apps/hermes-agent/data/        Hermes state (config.yaml, sessions, skills)
     ├── apps/llama-cpp/compose.yaml
     ├── apps/llama-cpp/.env     API key and tuning
     ├── apps/llama-cpp/models/  GGUF model files (one or more)
@@ -37,6 +40,8 @@ docker compose --env-file /mnt/ssd/homelab/apps/pihole/.env \
   -f /mnt/ssd/homelab/apps/pihole/compose.yaml ps
 docker compose --env-file /mnt/ssd/homelab/apps/llama-cpp/.env \
   -f /mnt/ssd/homelab/apps/llama-cpp/compose.yaml ps
+docker compose --env-file /mnt/ssd/homelab/apps/hermes-agent/.env \
+  -f /mnt/ssd/homelab/apps/hermes-agent/compose.yaml ps
 docker compose -f /mnt/ssd/homelab/apps/dozzle/compose.yaml ps
 ```
 
@@ -62,8 +67,10 @@ sudo ./setup.sh             # unsure, or both kinds of change
 ```
 
 For a single application: `sudo ./setup.sh reconcile <project>` where
-`<project>` is one of `docktail`, `pihole`, `llama-cpp`, or `dozzle`.
-`llama-cpp` is included whenever `reconcile` runs without a project.
+`<project>` is one of `docktail`, `pihole`, `llama-cpp`, `dozzle`, or
+`hermes-agent`. `llama-cpp` is included whenever `reconcile` runs without a
+project, and must be reconciled before `hermes-agent` (hermes-agent joins
+llama-cpp's Docker network).
 
 `docker compose up -d` reconciles changed images and configuration without
 removing application data. Do not run `docker compose down -v`.
