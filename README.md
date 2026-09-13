@@ -18,6 +18,9 @@ reachable only through Tailscale — no exposed ports except Pi-hole DNS.
   Pi's Tailscale IP.
 - [llama.cpp](apps/llama-cpp) runs as a CPU-only, OpenAI-compatible router
   serving every model staged on the SSD.
+- [hermes-agent](apps/hermes-agent) is an AI agent whose only entry point is
+  its web dashboard; it talks to the llama.cpp router above over a private
+  Docker network, not Tailscale.
 
 ## Apps
 
@@ -26,6 +29,7 @@ reachable only through Tailscale — no exposed ports except Pi-hole DNS.
 | [dozzle](apps/dozzle) | Container log viewer | `https://dozzle.<tailnet>.ts.net` |
 | [pihole](apps/pihole) | Tailnet-wide DNS + ad blocking | `https://pihole.<tailnet>.ts.net/admin/` |
 | [llama-cpp](apps/llama-cpp) | Local LLM inference server | `https://llama.<tailnet>.ts.net` |
+| [hermes-agent](apps/hermes-agent) | AI agent web dashboard, backed by llama-cpp | `https://hermes.<tailnet>.ts.net` |
 | [docktail](infra/docktail) | Publishes the apps above as Tailscale Services | — |
 
 ## Getting started
@@ -44,6 +48,7 @@ reachable only through Tailscale — no exposed ports except Pi-hole DNS.
 | [docs/first-setup.md](docs/first-setup.md) | Cloning, running `setup.sh`, what bootstrap/reconcile do |
 | [docs/services.md](docs/services.md) | Service URLs, DockTail troubleshooting, adding new apps |
 | [docs/llama-cpp.md](docs/llama-cpp.md) | Router mode, model management, tuning, testing |
+| [docs/hermes-agent.md](docs/hermes-agent.md) | Dashboard-only agent deployment, llama.cpp integration, security |
 | [docs/dns.md](docs/dns.md) | Tailnet-wide DNS via Pi-hole |
 | [docs/operations.md](docs/operations.md) | Verify/update commands, directory layout, recovery |
 
@@ -56,6 +61,7 @@ infra/docktail/          Tailscale Service publisher
 apps/dozzle/             container log viewer
 apps/pihole/             DNS + ad blocking
 apps/llama-cpp/          LLM inference
+apps/hermes-agent/       AI agent web dashboard
 ```
 
 Runtime data, secrets, and mirrored Compose files live on the SSD, not in

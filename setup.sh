@@ -16,6 +16,9 @@ MODE=full
 PROJECT=
 LLAMA_ENV=$HOMELAB_ROOT/apps/llama-cpp/.env
 LLAMA_MODELS=$HOMELAB_ROOT/apps/llama-cpp/models
+HERMES_ENV=$HOMELAB_ROOT/apps/hermes-agent/.env
+HERMES_DATA=$HOMELAB_ROOT/apps/hermes-agent/data
+HERMES_CONFIG=$HERMES_DATA/config.yaml
 
 fail() {
     printf 'setup: %s\n' "$1" >&2
@@ -34,8 +37,9 @@ root, Tailscale connection, boot overlays, firewall, disabled services). It
 never formats a disk. Idempotent but rarely needed once a host is set up.
 
 reconcile [project]: syncs Compose files and secrets, then starts or updates
-containers. project is one of: docktail, pihole, llama-cpp, dozzle. Omit it to
-reconcile all four. Fails fast if bootstrap has never completed.
+containers. project is one of: docktail, pihole, llama-cpp, dozzle,
+hermes-agent. Omit it to reconcile all five. Fails fast if bootstrap has
+never completed.
 EOF
 }
 
@@ -150,6 +154,7 @@ mount_ssd() {
     mkdir -p "$HOMELAB_ROOT/apps/pihole/data" \
         "$HOMELAB_ROOT/apps/pihole/dnsmasq.d" \
         "$HOMELAB_ROOT/apps/llama-cpp/models" \
+        "$HOMELAB_ROOT/apps/hermes-agent/data" \
         "$HOMELAB_ROOT/infra/docktail"
 }
 
@@ -299,6 +304,45 @@ ensure_llama_secret() {
     chmod 600 "$LLAMA_ENV"
 }
 
+ensure_hermes_secret() {
+    grep -Eq '^LLAMA_API_KEY=.+$' "$LLAMA_ENV" 2>/dev/null || \
+        fail "LLAMA_API_KEY is missing from $LLAMA_ENV; run 'sudo ./setup.sh reconcile llama-cpp' first"
+    docker network inspect llama-cpp >/dev/null 2>&1 || \
+        fail "the llama-cpp Docker network does not exist yet; run 'sudo ./setup.sh reconcile llama-cpp' first"
+    LLAMA_KEY=$(sed -n 's/^LLAMA_API_KEY=//p' "$LLAMA_ENV")
+
+    if [ ! -f "$HERMES_ENV" ]; then
+        ask 'Hermes dashboard username' 'admin'
+        HERMES_USERNAME=$ANSWER
+        ask_secret 'Hermes dashboard password'
+        [ -n "$SECRET_VALUE" ] || fail 'Hermes dashboard password cannot be empty'
+        HERMES_SECRET=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
+        printf 'HERMES_DASHBOARD_USERNAME=%s\nHERMES_DASHBOARD_PASSWORD=%s\nHERMES_DASHBOARD_SECRET=%s\n' \
+            "$HERMES_USERNAME" "$SECRET_VALUE" "$HERMES_SECRET" > "$HERMES_ENV"
+    fi
+    grep -Eq '^HERMES_DASHBOARD_USERNAME=.+$' "$HERMES_ENV" || fail "HERMES_DASHBOARD_USERNAME is missing from $HERMES_ENV"
+    grep -Eq '^HERMES_DASHBOARD_PASSWORD=.+$' "$HERMES_ENV" || fail "HERMES_DASHBOARD_PASSWORD is missing from $HERMES_ENV"
+    grep -Eq '^HERMES_DASHBOARD_SECRET=.+$' "$HERMES_ENV" || fail "HERMES_DASHBOARD_SECRET is missing from $HERMES_ENV"
+    chmod 600 "$HERMES_ENV"
+
+    if [ ! -f "$HERMES_CONFIG" ]; then
+        MODEL_COUNT=$(find "$LLAMA_MODELS" -maxdepth 1 -name '*.gguf' | wc -l | tr -d ' ')
+        {
+            printf 'model:\n'
+            printf '  provider: "llamacpp"\n'
+            printf '  base_url: "http://llama:8080/v1"\n'
+            printf '  api_key: "%s"\n' "$LLAMA_KEY"
+            if [ "$MODEL_COUNT" -eq 1 ]; then
+                MODEL_DEFAULT=$(basename "$(find "$LLAMA_MODELS" -maxdepth 1 -name '*.gguf')" .gguf)
+                printf '  default: "%s"\n' "$MODEL_DEFAULT"
+            fi
+            printf 'approvals:\n'
+            printf '  mode: "manual"\n'
+        } > "$HERMES_CONFIG"
+    fi
+    chmod 600 "$HERMES_CONFIG"
+}
+
 compose_up() {
     name=$1
     compose_file=$2
@@ -334,8 +378,13 @@ reconcile_project() {
             sync_compose "$REPO_ROOT/apps/dozzle/compose.yaml" "$HOMELAB_ROOT/apps/dozzle/compose.yaml"
             compose_up dozzle "$HOMELAB_ROOT/apps/dozzle/compose.yaml" ''
             ;;
+        hermes-agent)
+            sync_compose "$REPO_ROOT/apps/hermes-agent/compose.yaml" "$HOMELAB_ROOT/apps/hermes-agent/compose.yaml"
+            ensure_hermes_secret
+            compose_up hermes-agent "$HOMELAB_ROOT/apps/hermes-agent/compose.yaml" "$HERMES_ENV"
+            ;;
         *)
-            fail "unknown project '$1' (expected docktail, pihole, llama-cpp, or dozzle)"
+            fail "unknown project '$1' (expected docktail, pihole, llama-cpp, dozzle, or hermes-agent)"
             ;;
     esac
 }
@@ -345,6 +394,7 @@ reconcile_all() {
     reconcile_project pihole
     reconcile_project llama-cpp
     reconcile_project dozzle
+    reconcile_project hermes-agent
 }
 
 require_bootstrapped() {
