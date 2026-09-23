@@ -328,11 +328,14 @@ ensure_hermes_secret() {
     mkdir -p "$HERMES_DATA"
     if [ ! -f "$HERMES_CONFIG" ]; then
         MODEL_COUNT=$(find "$LLAMA_MODELS" -maxdepth 1 -name '*.gguf' | wc -l | tr -d ' ')
+        LLAMA_CTX=$(sed -n 's/^LLAMA_CTX_SIZE=//p' "$LLAMA_ENV")
+        LLAMA_CTX=${LLAMA_CTX:-4096}
         {
             printf 'model:\n'
             printf '  provider: "llamacpp"\n'
             printf '  base_url: "http://llama:8080/v1"\n'
             printf '  api_key: "%s"\n' "$LLAMA_KEY"
+            printf '  context_length: %s\n' "$LLAMA_CTX"
             if [ "$MODEL_COUNT" -eq 1 ]; then
                 MODEL_DEFAULT=$(basename "$(find "$LLAMA_MODELS" -maxdepth 1 -name '*.gguf')" .gguf)
                 printf '  default: "%s"\n' "$MODEL_DEFAULT"
