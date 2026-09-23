@@ -19,7 +19,14 @@ model:
   provider: "llamacpp"     # alias for "custom"
   base_url: "http://llama:8080/v1"
   api_key: "<the llama.cpp .env LLAMA_API_KEY value>"
+  context_length: 65536    # must match llama.cpp's LLAMA_CTX_SIZE
 ```
+
+hermes-agent hard-requires a model context window of at least 64,000
+tokens and refuses to use a model reporting less — it does not reliably
+auto-detect the context window through a `custom`/`llamacpp` provider, so
+`model.context_length` must be set explicitly and kept in sync with
+llama.cpp's `LLAMA_CTX_SIZE` (see [llama-cpp.md](llama-cpp.md#defaults)).
 
 This reaches llama.cpp directly over a private Docker network named
 `llama-cpp`, shared between the two Compose projects — not through Tailscale.
@@ -35,12 +42,32 @@ which means llama-cpp must be reconciled first (see
 
 `sudo ./setup.sh reconcile hermes-agent` seeds
 `/mnt/ssd/homelab/apps/hermes-agent/data/config.yaml` with the block above
-once, on first run only — it never overwrites the file afterward, so any
+once, on first run only — it reads `LLAMA_CTX_SIZE` from
+`/mnt/ssd/homelab/apps/llama-cpp/.env` at that moment and writes it as
+`model.context_length`, and never overwrites the file afterward, so any
 changes made later from the dashboard's Config page persist across
 reconciles. If exactly one `.gguf` model is staged in llama.cpp's models
 directory, its filename (minus `.gguf`) is also written as `model.default`;
 otherwise pick a model from the Chat tab's model picker (`/model llamacpp`)
 on first login.
+
+**Existing deployment, already reconciled once:** the seeding above only
+fires on a fresh `config.yaml`. Raising `LLAMA_CTX_SIZE` in llama.cpp's
+`.env` on an already-running Pi does not update hermes-agent's copy —
+edit `model.context_length` in
+`/mnt/ssd/homelab/apps/hermes-agent/data/config.yaml` to match, then
+`sudo ./setup.sh reconcile hermes-agent` to restart the container. Both
+values below need to change together; a mismatch means either hermes
+rejects the model (its value too low) or hermes overruns what llama.cpp
+actually allocated (its value too high, risking truncated context or
+errors mid-conversation):
+
+```sh
+sudo vi /mnt/ssd/homelab/apps/llama-cpp/.env               # LLAMA_CTX_SIZE=65536
+sudo ./setup.sh reconcile llama-cpp
+sudo vi /mnt/ssd/homelab/apps/hermes-agent/data/config.yaml # model.context_length: 65536
+sudo ./setup.sh reconcile hermes-agent
+```
 
 ## Requirements
 

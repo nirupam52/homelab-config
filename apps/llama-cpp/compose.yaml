@@ -17,6 +17,8 @@ services:
       LLAMA_ARG_THREADS: ${LLAMA_THREADS:-4}
       LLAMA_ARG_N_PARALLEL: ${LLAMA_N_PARALLEL:-1}
       LLAMA_ARG_MODELS_MAX: ${LLAMA_MODELS_MAX:-1}
+      LLAMA_ARG_CACHE_TYPE_K: ${LLAMA_CACHE_TYPE:-q8_0}
+      LLAMA_ARG_CACHE_TYPE_V: ${LLAMA_CACHE_TYPE:-q8_0}
       LLAMA_API_KEY: ${LLAMA_API_KEY:?Set LLAMA_API_KEY in .env}
     volumes:
       - /mnt/ssd/homelab/apps/llama-cpp/models:/models:ro
