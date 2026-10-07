@@ -2,7 +2,7 @@ name: pihole
 
 services:
   pihole:
-    image: pihole/pihole:2026.07.2@sha256:a29ad980775f38a8e7524a206ff9c125bc6fcfd9de8de1fc93d2de0671cc1d34
+    image: pihole/pihole:2026.09.0@sha256:5b9c8cf51de7d6d3f2240dbe72baf5f06e1fd39cb4d77a99fab4fa13e23bd1be
     restart: unless-stopped
     environment:
       TZ: ${TZ:-UTC}
