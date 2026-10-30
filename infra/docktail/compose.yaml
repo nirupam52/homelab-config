@@ -2,7 +2,7 @@ name: docktail
 
 services:
   docktail:
-    image: ghcr.io/marvinvr/docktail:1.8.3@sha256:0b63506d16d20b4dc6a5d725d73bde82a88b0b5aa02d8193d049cbf2781bb198
+    image: ghcr.io/marvinvr/docktail:1.8.6@sha256:a9d68198e97a9e0a90255ac3bf04390543bb3b387fc91344f07e2187409377e4
     restart: unless-stopped
     network_mode: host
     volumes:
