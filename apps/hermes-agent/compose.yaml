@@ -1,25 +1,144 @@
 name: hermes-agent
 
+# Three internal networks (no route out) plus one ordinary bridge used only
+# by the egress proxies:
+#   llm   hermes <-> egress-llm       provider traffic (OpenAI only)
+#   dev   hermes-sandbox <-> egress-dev   registries and GitHub only
+#   link  hermes <-> hermes-sandbox   SSH, the only path to the sandbox
 networks:
-  llama-cpp:
-    name: llama-cpp
-    external: true
+  llm:
+    internal: true
+  dev:
+    internal: true
+  link:
+    internal: true
+  internet:
+
+x-egress: &egress
+  image: ubuntu/squid:7.2-26.04_edge@sha256:aefdba10d1b7dc8f35d71a40ed3b106504154b4b5532f4d920ff3b66ada5441d
+  restart: unless-stopped
+  entrypoint: ["/usr/sbin/squid-gnutls"]
+  command: ["-N", "-f", "/etc/squid/squid.conf"]
+  read_only: true
+  tmpfs:
+    - /var/log/squid
+    - /var/spool/squid
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  mem_limit: 256m
+  pids_limit: 128
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+configs:
+  egress-llm:
+    file: ./egress/llm.conf
+  egress-dev:
+    file: ./egress/dev.conf
 
 services:
   hermes:
     image: nousresearch/hermes-agent:v2026.9.24@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
     restart: unless-stopped
+    depends_on:
+      - egress-llm
+      - hermes-sandbox
     networks:
-      - llama-cpp
+      - llm
+      - link
     environment:
       HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_USERNAME:?Set HERMES_DASHBOARD_USERNAME in .env}
       HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_PASSWORD:?Set HERMES_DASHBOARD_PASSWORD in .env}
       HERMES_DASHBOARD_BASIC_AUTH_SECRET: ${HERMES_DASHBOARD_SECRET:?Set HERMES_DASHBOARD_SECRET in .env}
+      HTTP_PROXY: http://egress-llm:3128
+      HTTPS_PROXY: http://egress-llm:3128
+      http_proxy: http://egress-llm:3128
+      https_proxy: http://egress-llm:3128
+      NO_PROXY: hermes-sandbox,localhost,127.0.0.1
+      no_proxy: hermes-sandbox,localhost,127.0.0.1
+      TERMINAL_SSH_HOST: hermes-sandbox
+      TERMINAL_SSH_PORT: "2222"
+      TERMINAL_SSH_USER: agent
+      TERMINAL_SSH_KEY: /run/hermes-ssh/id_ed25519
     volumes:
       - /mnt/ssd/homelab/apps/hermes-agent/data:/opt/data
+      - /mnt/ssd/homelab/apps/hermes-agent/ssh/id_ed25519:/run/hermes-ssh/id_ed25519:ro
     command: ["dashboard", "--host", "0.0.0.0", "--no-open"]
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run:exec
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 3g
+    pids_limit: 1024
     labels:
       - "docktail.service.enable=true"
       - "docktail.service.name=hermes"
       - "docktail.service.port=9119"
       - "docktail.service.service-port=443"
+      - "docktail.service.network=hermes-agent_llm"
+
+  hermes-sandbox:
+    build:
+      context: ./sandbox
+    image: hermes-sandbox:local
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    networks:
+      - dev
+      - link
+    environment:
+      HTTP_PROXY: http://egress-dev:3128
+      HTTPS_PROXY: http://egress-dev:3128
+      http_proxy: http://egress-dev:3128
+      https_proxy: http://egress-dev:3128
+      NO_PROXY: localhost,127.0.0.1
+      no_proxy: localhost,127.0.0.1
+    volumes:
+      - /mnt/ssd/homelab/apps/hermes-agent/workspace:/home/agent
+      - /mnt/ssd/homelab/apps/hermes-agent/ssh/authorized_keys:/etc/hermes-ssh/authorized_keys:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 4g
+    cpus: 3
+    pids_limit: 1024
+    depends_on:
+      - egress-dev
+
+  egress-llm:
+    <<: *egress
+    networks:
+      - llm
+      - internet
+    configs:
+      - source: egress-llm
+        target: /etc/squid/squid.conf
+
+  egress-dev:
+    <<: *egress
+    networks:
+      - dev
+      - internet
+    configs:
+      - source: egress-dev
+        target: /etc/squid/squid.conf

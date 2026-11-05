@@ -26,7 +26,7 @@ Complete these before running `setup.sh`.
   "grants": [
     {
       "src": ["autogroup:member"],
-      "dst": ["svc:dozzle", "svc:pihole", "svc:llama", "svc:hermes"],
+      "dst": ["svc:dozzle", "svc:pihole", "svc:hermes"],
       "ip": ["443"]
     }
   ],
@@ -50,28 +50,7 @@ Prepare an already-formatted partition with a filesystem UUID — `setup.sh`
 will never format a disk. Keep a local keyboard/monitor available for the
 first run: system SSH is disabled after Tailscale SSH is confirmed.
 
-## 3. llama.cpp models
-
-Stage one or more verified GGUF models after the SSD is mounted. Single-file
-models go directly in the directory; multimodal or multi-shard models go in
-their own subdirectory (see the [llama.cpp
-docs](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#model-sources)):
-
-```sh
-sudo install -d -m 0750 /mnt/ssd/homelab/apps/llama-cpp/models
-sudo install -m 0644 /path/to/model.gguf \
-  /mnt/ssd/homelab/apps/llama-cpp/models/
-sha256sum /mnt/ssd/homelab/apps/llama-cpp/models/model.gguf
-```
-
-Use the exact filename and checksum from the model publisher.
-
-> The first setup pass may create the SSD directory and stop with a
-> no-models error before Dozzle starts. Stage at least one model, then run
-> `sudo ./setup.sh reconcile` to resume reconciling every application, not
-> just llama.cpp.
-
-## 4. GitHub deploy key
+## 3. GitHub deploy key
 
 The Pi clones this repository over SSH with a repository-specific, read-only
 deploy key. Generate it as the normal Pi user:
