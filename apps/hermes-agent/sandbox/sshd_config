@@ -1,7 +1,7 @@
 # sshd for the hermes-sandbox container. Runs unprivileged as `agent` on a
 # high port, so the only account it can ever authenticate is `agent`.
 Port 2222
-HostKey /home/agent/.sshd/ssh_host_ed25519_key
+HostKey /etc/hermes-ssh/ssh_host_ed25519_key
 PidFile none
 AuthorizedKeysFile /etc/hermes-ssh/authorized_keys
 AllowUsers agent

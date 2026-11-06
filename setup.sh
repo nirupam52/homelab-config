@@ -319,40 +319,58 @@ ensure_hermes_secret() {
 
     mkdir -p "$HERMES_DATA" "$HERMES_SSH" "$HERMES_WORKSPACE"
 
-    # The key pair Hermes uses to reach its sandbox. The private key is
-    # mounted only into hermes (uid 10000), the public key only into
-    # hermes-sandbox.
+    # SSH material lives in this root-only directory and is mounted file by
+    # file, so nothing the agent can write controls it:
+    #   id_ed25519           Hermes's client key (hermes, uid 10000)
+    #   authorized_keys      its public half (hermes-sandbox)
+    #   ssh_host_ed25519_key the sandbox's host key (hermes-sandbox, uid 10001)
+    #   known_hosts          pins that host key for hermes
     if [ ! -f "$HERMES_SSH/id_ed25519" ] || [ ! -f "$HERMES_SSH/authorized_keys" ]; then
         rm -f "$HERMES_SSH/id_ed25519" "$HERMES_SSH/id_ed25519.pub" "$HERMES_SSH/authorized_keys"
         ssh-keygen -q -t ed25519 -N '' -C 'hermes to hermes-sandbox' -f "$HERMES_SSH/id_ed25519"
         mv "$HERMES_SSH/id_ed25519.pub" "$HERMES_SSH/authorized_keys"
     fi
+    if [ ! -f "$HERMES_SSH/ssh_host_ed25519_key" ]; then
+        rm -f "$HERMES_SSH/ssh_host_ed25519_key.pub"
+        ssh-keygen -q -t ed25519 -N '' -C 'hermes-sandbox host key' -f "$HERMES_SSH/ssh_host_ed25519_key"
+        rm -f "$HERMES_SSH/ssh_host_ed25519_key.pub"
+    fi
+    printf '[hermes-sandbox]:2222 %s\n' \
+        "$(ssh-keygen -y -f "$HERMES_SSH/ssh_host_ed25519_key" | cut -d ' ' -f 1,2)" > "$HERMES_SSH/known_hosts"
     chown 10000:10000 "$HERMES_SSH/id_ed25519"
-    chmod 600 "$HERMES_SSH/id_ed25519"
-    chmod 644 "$HERMES_SSH/authorized_keys"
+    chown 10001:10001 "$HERMES_SSH/ssh_host_ed25519_key"
+    chmod 600 "$HERMES_SSH/id_ed25519" "$HERMES_SSH/ssh_host_ed25519_key"
+    chmod 644 "$HERMES_SSH/authorized_keys" "$HERMES_SSH/known_hosts"
     chmod 700 "$HERMES_SSH"
 
     # hermes-sandbox runs as uid 10001; its home is this directory.
     chown 10001:10001 "$HERMES_WORKSPACE"
     chmod 700 "$HERMES_WORKSPACE"
 
+    # data/ is writable by the hermes container, so never follow a link in
+    # it as root, and never chown or chmod anything inside it.
+    [ ! -L "$HERMES_CONFIG" ] || fail "$HERMES_CONFIG is a symlink; remove it and rerun"
     if [ -f "$HERMES_CONFIG" ] && grep -Eq '^[[:space:]]*provider:[[:space:]]*"?llamacpp"?' "$HERMES_CONFIG"; then
         fail "$HERMES_CONFIG still points at llama.cpp, which is no longer deployed; move it aside (it holds the old API key) and rerun"
     fi
-    if [ ! -f "$HERMES_CONFIG" ]; then
-        {
-            printf 'model:\n'
-            printf '  provider: "openai-codex"\n'
-            printf 'terminal:\n'
-            printf '  backend: "ssh"\n'
-            printf 'approvals:\n'
-            printf '  mode: "manual"\n'
-            printf 'auth:\n'
-            printf '  adopt_external_logins: false\n'
-        } > "$HERMES_CONFIG"
+    if [ ! -e "$HERMES_CONFIG" ]; then
+        # sync_back_max_bytes: 0 stops Hermes from copying files from the
+        # sandbox back into its own skills and cache directories.
+        (
+            umask 077
+            {
+                printf 'model:\n'
+                printf '  provider: "openai-codex"\n'
+                printf 'terminal:\n'
+                printf '  backend: "ssh"\n'
+                printf '  sync_back_max_bytes: 0\n'
+                printf 'approvals:\n'
+                printf '  mode: "manual"\n'
+                printf 'auth:\n'
+                printf '  adopt_external_logins: false\n'
+            } > "$HERMES_CONFIG"
+        )
     fi
-    chown 10000:10000 "$HERMES_CONFIG"
-    chmod 600 "$HERMES_CONFIG"
 }
 
 compose_up() {

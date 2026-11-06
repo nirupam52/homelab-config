@@ -11,10 +11,8 @@ RUN apt-get update \
 
 COPY sshd_config /etc/ssh/sshd_hermes_config
 COPY sandbox-env.sh /etc/profile.d/sandbox-env.sh
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod 0755 /usr/local/bin/entrypoint.sh
 
 USER agent
 WORKDIR /home/agent
 EXPOSE 2222
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["/usr/sbin/sshd", "-D", "-e", "-f", "/etc/ssh/sshd_hermes_config"]

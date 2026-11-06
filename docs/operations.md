@@ -18,7 +18,7 @@ SSD: /mnt/ssd
     ├── apps/hermes-agent/sandbox/     Sandbox image build context
     ├── apps/hermes-agent/.env         Dashboard username/password/secret
     ├── apps/hermes-agent/data/        Hermes state (config.yaml, auth.json, sessions, skills)
-    ├── apps/hermes-agent/ssh/         Hermes-to-sandbox SSH key pair (root-only directory)
+    ├── apps/hermes-agent/ssh/         Hermes/sandbox SSH keys and known_hosts (root-only directory)
     ├── apps/hermes-agent/workspace/   Sandbox home directory (the agent's files)
     ├── apps/pihole/compose.yaml
     ├── apps/pihole/.env        Pi-hole password and Tailscale address

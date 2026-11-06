@@ -58,7 +58,8 @@ for the first run.
 - Starts or updates DockTail, Pi-hole, Dozzle, and Hermes (the agent, its
   sandbox, and two egress proxies). The Hermes sandbox image is built on the
   Pi from `apps/hermes-agent/sandbox/`.
-- Generates the SSH key pair Hermes uses to reach its sandbox, once.
+- Generates the SSH keys Hermes and its sandbox use to authenticate each
+  other, once.
 - Never formats the SSD or removes application data or Compose volumes.
 - Fails fast if bootstrap has never completed: it requires the SSD mounted
   at `/mnt/ssd`, Docker's data root on the SSD, and a connected Tailscale
