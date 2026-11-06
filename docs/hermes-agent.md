@@ -40,10 +40,21 @@ the proxies are the *only* way any of these containers reaches anything
 outside the Pi. Enforcement is by network topology, not by environment
 variables: a tool that ignores `HTTPS_PROXY` simply has no route.
 
-Hermes's terminal backend is `ssh` (`terminal.backend` in `config.yaml`,
-`TERMINAL_SSH_*` in `compose.yaml`). The sandbox is the "remote machine".
+Hermes's terminal backend is `ssh`. The sandbox is the "remote machine".
 Hermes's own docs recommend this layout for separating the agent's brain from
-its command execution.
+its command execution. The settings live in two places on purpose:
+
+- `terminal.backend` and `terminal.ssh_*` in `data/config.yaml`. The
+  dashboard's file panel and tool-status checks read the SSH host only from
+  here (or from a `.env` file in the data directory), not from the
+  container's environment. Without them, the file panel fails with `SSH host
+  and user are required`, and an agent that tries to produce a file for the
+  dashboard reports a missing SSH configuration.
+- `TERMINAL_ENV` and `TERMINAL_SSH_*` in `compose.yaml`. Hermes defaults to
+  the `local` backend, which is the `hermes` container itself. Any Hermes
+  process that does not load `config.yaml` would run commands there, next to
+  the ChatGPT login. The environment default makes that process use the
+  sandbox instead.
 
 ## Signing in with Codex
 
@@ -175,6 +186,10 @@ model:
   provider: "openai-codex"
 terminal:
   backend: "ssh"
+  ssh_host: "hermes-sandbox"
+  ssh_user: "agent"
+  ssh_port: 2222
+  ssh_key: "/run/hermes-ssh/id_ed25519"
   sync_back_max_bytes: 0
 approvals:
   mode: "manual"
@@ -193,6 +208,20 @@ which the `hermes` container can write. If you change `terminal.backend`
 there, you bypass the sandbox: commands would run inside the `hermes`
 container next to the ChatGPT login. Removing `sync_back_max_bytes: 0`
 re-enables copying files from the sandbox into Hermes's skills.
+
+**An existing deployment** (seeded before the `ssh_*` keys were added) needs
+them added once, since `config.yaml` is never overwritten. Then restart
+`hermes` so it picks up the `TERMINAL_ENV` default from `compose.yaml`:
+
+```sh
+H=/mnt/ssd/homelab/apps/hermes-agent
+HC="sudo docker compose --project-name hermes-agent --env-file $H/.env -f $H/compose.yaml"
+for kv in "terminal.ssh_host hermes-sandbox" "terminal.ssh_user agent" \
+          "terminal.ssh_port 2222" "terminal.ssh_key /run/hermes-ssh/id_ed25519"; do
+  $HC exec -u hermes hermes hermes config set --force $kv
+done
+sudo ./setup.sh reconcile hermes-agent
+```
 
 ## Migrating from the llama.cpp deployment
 

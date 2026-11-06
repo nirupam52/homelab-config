@@ -68,6 +68,9 @@ services:
       https_proxy: http://egress-llm:3128
       NO_PROXY: hermes-sandbox,localhost,127.0.0.1
       no_proxy: hermes-sandbox,localhost,127.0.0.1
+      # Default backend for any Hermes process that does not read config.yaml
+      # (Hermes falls back to "local", i.e. this container, when unset).
+      TERMINAL_ENV: ssh
       TERMINAL_SSH_HOST: hermes-sandbox
       TERMINAL_SSH_PORT: "2222"
       TERMINAL_SSH_USER: agent
