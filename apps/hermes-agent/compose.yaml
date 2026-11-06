@@ -71,6 +71,10 @@ services:
       # Default backend for any Hermes process that does not read config.yaml
       # (Hermes falls back to "local", i.e. this container, when unset).
       TERMINAL_ENV: ssh
+      # The agent's file tools write into the sandbox, so confine them to its home.
+      # The image's default (/opt/data) is a path in this container and makes
+      # every write in the sandbox fail with "outside HERMES_WRITE_SAFE_ROOT".
+      HERMES_WRITE_SAFE_ROOT: /home/agent
       TERMINAL_SSH_HOST: hermes-sandbox
       TERMINAL_SSH_PORT: "2222"
       TERMINAL_SSH_USER: agent

@@ -44,17 +44,25 @@ Hermes's terminal backend is `ssh`. The sandbox is the "remote machine".
 Hermes's own docs recommend this layout for separating the agent's brain from
 its command execution. The settings live in two places on purpose:
 
-- `terminal.backend` and `terminal.ssh_*` in `data/config.yaml`. The
-  dashboard's file panel and tool-status checks read the SSH host only from
-  here (or from a `.env` file in the data directory), not from the
-  container's environment. Without them, the file panel fails with `SSH host
-  and user are required`, and an agent that tries to produce a file for the
-  dashboard reports a missing SSH configuration.
-- `TERMINAL_ENV` and `TERMINAL_SSH_*` in `compose.yaml`. Hermes defaults to
-  the `local` backend, which is the `hermes` container itself. Any Hermes
-  process that does not load `config.yaml` would run commands there, next to
-  the ChatGPT login. The environment default makes that process use the
-  sandbox instead.
+- `terminal.backend` and `terminal.ssh_*` in `data/config.yaml`. This is the
+  one that matters for everything the agent does. Hermes builds a terminal
+  policy for each turn (dashboard chat, agent tools, cron jobs) from its code
+  defaults, a `.env` file in the data directory, and `config.yaml`, and it
+  deliberately ignores the container's environment variables. Without
+  `ssh_*` there, a turn has backend `ssh` and an empty host, and the agent's
+  `write_file` fails with `SSH environment requires ssh_host and ssh_user to
+  be configured`, the dashboard file panel with `SSH host and user are
+  required`, and a scheduled task reports a missing SSH configuration.
+- `TERMINAL_ENV` and `TERMINAL_SSH_*` in `compose.yaml`. These only apply to
+  Hermes processes that do not build that policy. Hermes defaults to the
+  `local` backend, which is the `hermes` container itself, so without
+  `TERMINAL_ENV` such a process would run commands next to the ChatGPT login.
+
+`HERMES_WRITE_SAFE_ROOT` is set to `/home/agent` in `compose.yaml`. The image
+sets it to `/opt/data`, a path that only exists in the `hermes` container; the
+agent's file tools write into the sandbox, so every write there failed with
+"outside HERMES_WRITE_SAFE_ROOT". Writes are now confined to the sandbox
+home, and `/etc` and the system paths stay refused.
 
 ## Signing in with Codex
 
