@@ -387,7 +387,7 @@ compose_up() {
         set -- --project-name "$name" -f "$compose_file"
     fi
     docker compose "$@" config --quiet
-    docker compose "$@" up -d --build
+    docker compose "$@" up -d
 }
 
 reconcile_project() {
@@ -412,6 +412,10 @@ reconcile_project() {
             sync_tree "$REPO_ROOT/apps/hermes-agent/egress" "$HERMES_DIR/egress"
             sync_tree "$REPO_ROOT/apps/hermes-agent/sandbox" "$HERMES_DIR/sandbox"
             ensure_hermes_secret
+            # Built with plain `docker build` (not Compose's buildx-based
+            # build, which needs buildx 0.17+); Compose then recreates the
+            # container if the image changed.
+            docker build -t hermes-sandbox:local "$HERMES_DIR/sandbox"
             compose_up hermes-agent "$HOMELAB_ROOT/apps/hermes-agent/compose.yaml" "$HERMES_ENV"
             ;;
         *)

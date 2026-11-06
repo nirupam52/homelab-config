@@ -94,8 +94,6 @@ services:
       - "docktail.service.network=hermes-agent_llm"
 
   hermes-sandbox:
-    build:
-      context: ./sandbox
     image: hermes-sandbox:local
     restart: unless-stopped
     init: true

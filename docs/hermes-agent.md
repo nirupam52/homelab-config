@@ -119,13 +119,12 @@ pip and venv, Node.js and npm, git, build-essential, ripgrep, jq and curl.
   forwarding, and its host key and the authorized key mounted read-only from
   the root-only `ssh/` directory (nothing the agent can write controls them).
 - **Adding tools**: edit `sandbox/Dockerfile`, then
-  `sudo ./setup.sh reconcile hermes-agent` (it rebuilds). Rebuild with
-  `--no-cache` periodically to pick up Debian security updates:
+  `sudo ./setup.sh reconcile hermes-agent` (it rebuilds the image with
+  `docker build` and recreates the container). To pick up Debian security
+  updates, rebuild without the cache from time to time:
   ```sh
-  docker compose --project-name hermes-agent \
-    --env-file /mnt/ssd/homelab/apps/hermes-agent/.env \
-    -f /mnt/ssd/homelab/apps/hermes-agent/compose.yaml \
-    build --no-cache hermes-sandbox
+  sudo docker build --no-cache -t hermes-sandbox:local \
+    /mnt/ssd/homelab/apps/hermes-agent/sandbox
   sudo ./setup.sh reconcile hermes-agent
   ```
 - **Reset**: stop the stack and clear `workspace/` to wipe the agent's files.
