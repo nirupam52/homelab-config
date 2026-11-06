@@ -29,6 +29,12 @@ x-egress: &egress
     - no-new-privileges:true
   mem_limit: 256m
   pids_limit: 128
+  # Squid sizes its descriptor table from this limit; Docker's default can be
+  # ~1 billion, which makes it abort with "xcalloc: Unable to allocate".
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
   logging:
     driver: json-file
     options:
