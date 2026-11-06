@@ -4,6 +4,11 @@ set -eu
 LC_ALL=C
 export LC_ALL
 
+# Build through the Docker Engine instead of Compose's buildx "bake" path,
+# which needs buildx 0.17 or later (Debian's docker-buildx is older).
+COMPOSE_BAKE=false
+export COMPOSE_BAKE
+
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SSD_MOUNT=/mnt/ssd
 HOMELAB_ROOT=$SSD_MOUNT/homelab
