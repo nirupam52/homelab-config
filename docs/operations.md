@@ -14,11 +14,12 @@ SSD: /mnt/ssd
 └── homelab/
     ├── apps/dozzle/compose.yaml
     ├── apps/hermes-agent/compose.yaml
+    ├── apps/hermes-agent/egress/      Squid allowlists (llm.conf, dev.conf)
+    ├── apps/hermes-agent/sandbox/     Sandbox image build context
     ├── apps/hermes-agent/.env         Dashboard username/password/secret
-    ├── apps/hermes-agent/data/        Hermes state (config.yaml, sessions, skills)
-    ├── apps/llama-cpp/compose.yaml
-    ├── apps/llama-cpp/.env     API key and tuning
-    ├── apps/llama-cpp/models/  GGUF model files (one or more)
+    ├── apps/hermes-agent/data/        Hermes state (config.yaml, auth.json, sessions, skills)
+    ├── apps/hermes-agent/ssh/         Hermes/sandbox SSH keys and known_hosts (root-only directory)
+    ├── apps/hermes-agent/workspace/   Sandbox home directory (the agent's files)
     ├── apps/pihole/compose.yaml
     ├── apps/pihole/.env        Pi-hole password and Tailscale address
     ├── apps/pihole/data/       Pi-hole data
@@ -38,8 +39,6 @@ docker compose --env-file /mnt/ssd/homelab/infra/docktail/.env \
   -f /mnt/ssd/homelab/infra/docktail/compose.yaml ps
 docker compose --env-file /mnt/ssd/homelab/apps/pihole/.env \
   -f /mnt/ssd/homelab/apps/pihole/compose.yaml ps
-docker compose --env-file /mnt/ssd/homelab/apps/llama-cpp/.env \
-  -f /mnt/ssd/homelab/apps/llama-cpp/compose.yaml ps
 docker compose --env-file /mnt/ssd/homelab/apps/hermes-agent/.env \
   -f /mnt/ssd/homelab/apps/hermes-agent/compose.yaml ps
 docker compose -f /mnt/ssd/homelab/apps/dozzle/compose.yaml ps
@@ -47,7 +46,7 @@ docker compose -f /mnt/ssd/homelab/apps/dozzle/compose.yaml ps
 
 The firewall defaults to deny incoming and allow outgoing, with an inbound
 allow only on `tailscale0`. Pi-hole is expected to be the only container
-with published host ports. llama.cpp should show no published ports. Check
+with published host ports. The hermes-agent services should show none. Check
 the Tailscale admin console if a DockTail Service is pending approval — see
 [Services](services.md#troubleshooting).
 
@@ -67,10 +66,7 @@ sudo ./setup.sh             # unsure, or both kinds of change
 ```
 
 For a single application: `sudo ./setup.sh reconcile <project>` where
-`<project>` is one of `docktail`, `pihole`, `llama-cpp`, `dozzle`, or
-`hermes-agent`. `llama-cpp` is included whenever `reconcile` runs without a
-project, and must be reconciled before `hermes-agent` (hermes-agent joins
-llama-cpp's Docker network).
+`<project>` is one of `docktail`, `pihole`, `dozzle`, or `hermes-agent`.
 
 `docker compose up -d` reconciles changed images and configuration without
 removing application data. Do not run `docker compose down -v`.

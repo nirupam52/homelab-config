@@ -26,13 +26,11 @@ The guided prompts request, in order:
    before system SSH is disabled.
 3. The Tailscale OAuth client ID and secret.
 4. A Pi-hole web password.
-5. The llama.cpp API key.
+5. A Hermes dashboard username and password.
 
 Prompts 3, 4, and 5 only appear the first time, or after their runtime
 `.env` file is removed; reruns keep the existing values. Runtime `.env`
-files are created on the SSD with mode `600`. `reconcile llama-cpp`
-separately requires at least one `.gguf` file already staged (see
-[prerequisites](prerequisites.md#3-llamacpp-models)).
+files are created on the SSD with mode `600`.
 
 ## What it does
 
@@ -57,9 +55,12 @@ for the first run.
 - Collects any missing secret; preserves existing `.env` values (stays mode
   `600`).
 - Refreshes Pi-hole's `.env` with the current Tailscale address.
-- Starts or updates DockTail, Pi-hole, llama.cpp, and Dozzle.
-- Never formats the SSD or removes application data, models, or Compose
-  volumes.
+- Starts or updates DockTail, Pi-hole, Dozzle, and Hermes (the agent, its
+  sandbox, and two egress proxies). The Hermes sandbox image is built on the
+  Pi from `apps/hermes-agent/sandbox/`.
+- Generates the SSH keys Hermes and its sandbox use to authenticate each
+  other, once.
+- Never formats the SSD or removes application data or Compose volumes.
 - Fails fast if bootstrap has never completed: it requires the SSD mounted
   at `/mnt/ssd`, Docker's data root on the SSD, and a connected Tailscale
   daemon.

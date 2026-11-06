@@ -14,11 +14,12 @@ SECRET_VALUE=
 TAILSCALE_IPV4=
 MODE=full
 PROJECT=
-LLAMA_ENV=$HOMELAB_ROOT/apps/llama-cpp/.env
-LLAMA_MODELS=$HOMELAB_ROOT/apps/llama-cpp/models
-HERMES_ENV=$HOMELAB_ROOT/apps/hermes-agent/.env
-HERMES_DATA=$HOMELAB_ROOT/apps/hermes-agent/data
+HERMES_DIR=$HOMELAB_ROOT/apps/hermes-agent
+HERMES_ENV=$HERMES_DIR/.env
+HERMES_DATA=$HERMES_DIR/data
 HERMES_CONFIG=$HERMES_DATA/config.yaml
+HERMES_SSH=$HERMES_DIR/ssh
+HERMES_WORKSPACE=$HERMES_DIR/workspace
 
 fail() {
     printf 'setup: %s\n' "$1" >&2
@@ -37,9 +38,8 @@ root, Tailscale connection, boot overlays, firewall, disabled services). It
 never formats a disk. Idempotent but rarely needed once a host is set up.
 
 reconcile [project]: syncs Compose files and secrets, then starts or updates
-containers. project is one of: docktail, pihole, llama-cpp, dozzle,
-hermes-agent. Omit it to reconcile all five. Fails fast if bootstrap has
-never completed.
+containers. project is one of: docktail, pihole, dozzle, hermes-agent. Omit
+it to reconcile all four. Fails fast if bootstrap has never completed.
 EOF
 }
 
@@ -76,7 +76,7 @@ ask_secret() {
 install_packages() {
     printf '%s\n' '== Install host packages =='
     need dpkg
-    REQUIRED_PACKAGES='ca-certificates curl docker.io ufw unattended-upgrades locales'
+    REQUIRED_PACKAGES='ca-certificates curl docker.io openssh-client ufw unattended-upgrades locales'
     NEED_INSTALL=0
     for pkg in $REQUIRED_PACKAGES; do
         dpkg -s "$pkg" >/dev/null 2>&1 || NEED_INSTALL=1
@@ -121,6 +121,16 @@ sync_compose() {
     fi
 }
 
+sync_tree() {
+    source=$1
+    destination=$2
+    if [ "$source" != "$destination" ]; then
+        (cd "$source" && find . -type f) | while IFS= read -r file; do
+            install -D -m 0644 "$source/$file" "$destination/$file"
+        done
+    fi
+}
+
 mount_ssd() {
     printf '%s\n' '== Mount SSD =='
     need blkid
@@ -153,8 +163,7 @@ mount_ssd() {
     mountpoint -q "$SSD_MOUNT" || fail "$SSD_MOUNT is not mounted"
     mkdir -p "$HOMELAB_ROOT/apps/pihole/data" \
         "$HOMELAB_ROOT/apps/pihole/dnsmasq.d" \
-        "$HOMELAB_ROOT/apps/llama-cpp/models" \
-        "$HOMELAB_ROOT/apps/hermes-agent/data" \
+        "$HERMES_DATA" \
         "$HOMELAB_ROOT/infra/docktail"
 }
 
@@ -291,25 +300,8 @@ ensure_pihole_secret() {
     chmod 600 "$PIHOLE_ENV"
 }
 
-ensure_llama_secret() {
-    if [ ! -f "$LLAMA_ENV" ]; then
-        ask_secret 'llama.cpp API key'
-        [ -n "$SECRET_VALUE" ] || fail 'llama.cpp API key cannot be empty'
-        printf 'LLAMA_API_KEY=%s\n' "$SECRET_VALUE" > "$LLAMA_ENV"
-    fi
-    grep -Eq '^LLAMA_API_KEY=.+$' "$LLAMA_ENV" || \
-        fail 'LLAMA_API_KEY is missing from the llama.cpp .env'
-    [ -n "$(find "$LLAMA_MODELS" -name '*.gguf' -print -quit)" ] || \
-        fail "no .gguf models found in $LLAMA_MODELS; stage at least one before reconciling llama-cpp"
-    chmod 600 "$LLAMA_ENV"
-}
-
 ensure_hermes_secret() {
-    grep -Eq '^LLAMA_API_KEY=.+$' "$LLAMA_ENV" 2>/dev/null || \
-        fail "LLAMA_API_KEY is missing from $LLAMA_ENV; run 'sudo ./setup.sh reconcile llama-cpp' first"
-    docker network inspect llama-cpp >/dev/null 2>&1 || \
-        fail "the llama-cpp Docker network does not exist yet; run 'sudo ./setup.sh reconcile llama-cpp' first"
-    LLAMA_KEY=$(sed -n 's/^LLAMA_API_KEY=//p' "$LLAMA_ENV")
+    need ssh-keygen
 
     if [ ! -f "$HERMES_ENV" ]; then
         ask 'Hermes dashboard username' 'admin'
@@ -325,26 +317,64 @@ ensure_hermes_secret() {
     grep -Eq '^HERMES_DASHBOARD_SECRET=.+$' "$HERMES_ENV" || fail "HERMES_DASHBOARD_SECRET is missing from $HERMES_ENV"
     chmod 600 "$HERMES_ENV"
 
-    mkdir -p "$HERMES_DATA"
-    if [ ! -f "$HERMES_CONFIG" ]; then
-        MODEL_COUNT=$(find "$LLAMA_MODELS" -maxdepth 1 -name '*.gguf' | wc -l | tr -d ' ')
-        LLAMA_CTX=$(sed -n 's/^LLAMA_CTX_SIZE=//p' "$LLAMA_ENV")
-        LLAMA_CTX=${LLAMA_CTX:-4096}
-        {
-            printf 'model:\n'
-            printf '  provider: "llamacpp"\n'
-            printf '  base_url: "http://llama:8080/v1"\n'
-            printf '  api_key: "%s"\n' "$LLAMA_KEY"
-            printf '  context_length: %s\n' "$LLAMA_CTX"
-            if [ "$MODEL_COUNT" -eq 1 ]; then
-                MODEL_DEFAULT=$(basename "$(find "$LLAMA_MODELS" -maxdepth 1 -name '*.gguf')" .gguf)
-                printf '  default: "%s"\n' "$MODEL_DEFAULT"
-            fi
-            printf 'approvals:\n'
-            printf '  mode: "manual"\n'
-        } > "$HERMES_CONFIG"
+    mkdir -p "$HERMES_DATA" "$HERMES_SSH" "$HERMES_WORKSPACE"
+
+    # SSH material lives in this root-only directory and is mounted file by
+    # file, so nothing the agent can write controls it:
+    #   id_ed25519           Hermes's client key (hermes, uid 10000)
+    #   authorized_keys      its public half (hermes-sandbox)
+    #   ssh_host_ed25519_key the sandbox's host key (hermes-sandbox, uid 10001)
+    #   known_hosts          pins that host key for hermes
+    if [ ! -f "$HERMES_SSH/id_ed25519" ] || [ ! -f "$HERMES_SSH/authorized_keys" ]; then
+        rm -f "$HERMES_SSH/id_ed25519" "$HERMES_SSH/id_ed25519.pub" "$HERMES_SSH/authorized_keys"
+        ssh-keygen -q -t ed25519 -N '' -C 'hermes to hermes-sandbox' -f "$HERMES_SSH/id_ed25519"
+        mv "$HERMES_SSH/id_ed25519.pub" "$HERMES_SSH/authorized_keys"
     fi
-    chmod 600 "$HERMES_CONFIG"
+    if [ ! -f "$HERMES_SSH/ssh_host_ed25519_key" ]; then
+        rm -f "$HERMES_SSH/ssh_host_ed25519_key.pub"
+        ssh-keygen -q -t ed25519 -N '' -C 'hermes-sandbox host key' -f "$HERMES_SSH/ssh_host_ed25519_key"
+        rm -f "$HERMES_SSH/ssh_host_ed25519_key.pub"
+    fi
+    printf '[hermes-sandbox]:2222 %s\n' \
+        "$(ssh-keygen -y -f "$HERMES_SSH/ssh_host_ed25519_key" | cut -d ' ' -f 1,2)" > "$HERMES_SSH/known_hosts"
+    chown 10000:10000 "$HERMES_SSH/id_ed25519"
+    chown 10001:10001 "$HERMES_SSH/ssh_host_ed25519_key"
+    chmod 600 "$HERMES_SSH/id_ed25519" "$HERMES_SSH/ssh_host_ed25519_key"
+    chmod 644 "$HERMES_SSH/authorized_keys" "$HERMES_SSH/known_hosts"
+    chmod 700 "$HERMES_SSH"
+
+    # hermes-sandbox runs as uid 10001; its home is this directory.
+    chown 10001:10001 "$HERMES_WORKSPACE"
+    chmod 700 "$HERMES_WORKSPACE"
+
+    # data/ is writable by the hermes container, so never follow a link in
+    # it as root, and never chown or chmod anything inside it.
+    [ ! -L "$HERMES_CONFIG" ] || fail "$HERMES_CONFIG is a symlink; remove it and rerun"
+    if [ -f "$HERMES_CONFIG" ] && grep -Eq '^[[:space:]]*provider:[[:space:]]*"?llamacpp"?' "$HERMES_CONFIG"; then
+        fail "$HERMES_CONFIG still points at llama.cpp, which is no longer deployed; move it aside (it holds the old API key) and rerun"
+    fi
+    if [ ! -e "$HERMES_CONFIG" ]; then
+        # sync_back_max_bytes: 0 stops Hermes from copying files from the
+        # sandbox back into its own skills and cache directories.
+        (
+            umask 077
+            {
+                printf 'model:\n'
+                printf '  provider: "openai-codex"\n'
+                printf 'terminal:\n'
+                printf '  backend: "ssh"\n'
+                printf '  sync_back_max_bytes: 0\n'
+                printf 'approvals:\n'
+                printf '  mode: "manual"\n'
+                printf 'auth:\n'
+                printf '  adopt_external_logins: false\n'
+                printf 'web:\n'
+                printf '  search_backend: "openai-native"\n'
+                printf '  keyless_fallback: false\n'
+                printf '  keyless_rescue: false\n'
+            } > "$HERMES_CONFIG"
+        )
+    fi
 }
 
 compose_up() {
@@ -357,7 +387,7 @@ compose_up() {
         set -- --project-name "$name" -f "$compose_file"
     fi
     docker compose "$@" config --quiet
-    docker compose "$@" up -d
+    docker compose "$@" up -d --build
 }
 
 reconcile_project() {
@@ -373,22 +403,19 @@ reconcile_project() {
             ensure_pihole_secret
             compose_up pihole "$HOMELAB_ROOT/apps/pihole/compose.yaml" "$PIHOLE_ENV"
             ;;
-        llama-cpp)
-            sync_compose "$REPO_ROOT/apps/llama-cpp/compose.yaml" "$HOMELAB_ROOT/apps/llama-cpp/compose.yaml"
-            ensure_llama_secret
-            compose_up llama-cpp "$HOMELAB_ROOT/apps/llama-cpp/compose.yaml" "$LLAMA_ENV"
-            ;;
         dozzle)
             sync_compose "$REPO_ROOT/apps/dozzle/compose.yaml" "$HOMELAB_ROOT/apps/dozzle/compose.yaml"
             compose_up dozzle "$HOMELAB_ROOT/apps/dozzle/compose.yaml" ''
             ;;
         hermes-agent)
-            sync_compose "$REPO_ROOT/apps/hermes-agent/compose.yaml" "$HOMELAB_ROOT/apps/hermes-agent/compose.yaml"
+            sync_compose "$REPO_ROOT/apps/hermes-agent/compose.yaml" "$HERMES_DIR/compose.yaml"
+            sync_tree "$REPO_ROOT/apps/hermes-agent/egress" "$HERMES_DIR/egress"
+            sync_tree "$REPO_ROOT/apps/hermes-agent/sandbox" "$HERMES_DIR/sandbox"
             ensure_hermes_secret
             compose_up hermes-agent "$HOMELAB_ROOT/apps/hermes-agent/compose.yaml" "$HERMES_ENV"
             ;;
         *)
-            fail "unknown project '$1' (expected docktail, pihole, llama-cpp, dozzle, or hermes-agent)"
+            fail "unknown project '$1' (expected docktail, pihole, dozzle, or hermes-agent)"
             ;;
     esac
 }
@@ -396,7 +423,6 @@ reconcile_project() {
 reconcile_all() {
     reconcile_project docktail
     reconcile_project pihole
-    reconcile_project llama-cpp
     reconcile_project dozzle
     reconcile_project hermes-agent
 }
