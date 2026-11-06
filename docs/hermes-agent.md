@@ -70,6 +70,32 @@ dashboard's **Chat** tab and pick a model with `/model`.
   `*.openai.com` and `*.chatgpt.com` and nothing else. To add a provider, add
   its hostnames to `egress/llm.conf`.
 
+## Web search
+
+`web_search` runs through OpenAI's own server-side search, using the same
+Codex login and the same `*.openai.com`/`*.chatgpt.com` allowlist, so it adds
+no hostname, key or route (`web.search_backend: "openai-native"`). Hermes
+never connects to an arbitrary website itself: OpenAI does the searching and
+the results come back through the model.
+
+- **Search only.** `web_extract` (reading a page by URL) does not work.
+  Hermes still lists it and defaults it to Firecrawl, but the proxy denies
+  `api.firecrawl.dev`, so calls fail (they show as `TCP_DENIED`). Making it
+  work needs an extract provider (Tavily, Firecrawl, Exa, ...), one more key
+  and its hostname in `egress/llm.conf`, and it would let a prompt-injected
+  page ask a hosted fetcher to load an attacker URL with conversation data in
+  it. Add one only when you need it.
+- **No free third-party search.** `keyless_fallback` and `keyless_rescue` are
+  off, so Hermes does not fall back to Exa, Firecrawl or other free tiers
+  (which the proxy would block anyway).
+- **Results are model-written**, not raw search-engine output, and count
+  against your Codex quota.
+- **Search results are untrusted input.** Keep personal data (private notes,
+  mail, credentials) out of this agent's memory and context.
+
+To enable it on an existing deployment, add the `web:` block shown under
+Requirements to `data/config.yaml` and restart `hermes`.
+
 ## The sandbox
 
 `hermes-sandbox` is a Debian container built on the Pi from
@@ -151,6 +177,10 @@ approvals:
   mode: "manual"
 auth:
   adopt_external_logins: false
+web:
+  search_backend: "openai-native"
+  keyless_fallback: false
+  keyless_rescue: false
 ```
 
 It never overwrites an existing `config.yaml`, so later changes from the
@@ -235,9 +265,9 @@ SSH *public* key and its own host key.
 
 **Network egress is allowlisted.** Neither container has a route out except
 through its proxy; `hermes` can reach OpenAI only, the sandbox can reach
-registries and GitHub only. The bundled browser and web tools in the `hermes`
-container have nowhere to go, as do the dashboard's skill-hub installs and
-update checks.
+registries and GitHub only. Web search goes through OpenAI; the bundled
+browser, `web_extract` and the dashboard's skill-hub installs and update
+checks have nowhere to go.
 
 **Command approval is forced to `manual`.** The SSH backend keeps Hermes's
 dangerous-command checks on, and `approvals.mode: manual` makes a human

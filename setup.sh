@@ -368,6 +368,10 @@ ensure_hermes_secret() {
                 printf '  mode: "manual"\n'
                 printf 'auth:\n'
                 printf '  adopt_external_logins: false\n'
+                printf 'web:\n'
+                printf '  search_backend: "openai-native"\n'
+                printf '  keyless_fallback: false\n'
+                printf '  keyless_rescue: false\n'
             } > "$HERMES_CONFIG"
         )
     fi
