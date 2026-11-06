@@ -58,6 +58,7 @@ services:
       - llm
       - link
     environment:
+      HERMES_DASHBOARD: "1"
       HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_USERNAME:?Set HERMES_DASHBOARD_USERNAME in .env}
       HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_PASSWORD:?Set HERMES_DASHBOARD_PASSWORD in .env}
       HERMES_DASHBOARD_BASIC_AUTH_SECRET: ${HERMES_DASHBOARD_SECRET:?Set HERMES_DASHBOARD_SECRET in .env}
@@ -75,7 +76,7 @@ services:
       - /mnt/ssd/homelab/apps/hermes-agent/data:/opt/data
       - /mnt/ssd/homelab/apps/hermes-agent/ssh/id_ed25519:/run/hermes-ssh/id_ed25519:ro
       - /mnt/ssd/homelab/apps/hermes-agent/ssh/known_hosts:/etc/ssh/ssh_known_hosts:ro
-    command: ["dashboard", "--host", "0.0.0.0", "--no-open"]
+    command: ["gateway", "run"]
     read_only: true
     tmpfs:
       - /tmp:size=512m

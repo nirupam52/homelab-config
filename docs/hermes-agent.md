@@ -1,12 +1,16 @@
 # hermes-agent
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) (Nous Research)
-running as a **dashboard-only** deployment: the container runs `hermes
-dashboard`, never `hermes gateway run`, so no Telegram/Discord/Slack/etc.
-messaging integration ever starts and no OpenAI-compatible API server is
-exposed. The only way in is the web dashboard's Chat tab, which embeds the
-full Hermes terminal UI in the browser. DockTail publishes it as the private
-Tailscale Service `hermes` on HTTPS port `443`. No host port is published.
+running with its **web dashboard as the only way in**. The container runs the
+gateway runtime (`hermes gateway run`) with the dashboard supervised beside
+it (`HERMES_DASHBOARD=1`). The dashboard's Chat tab needs that runtime: its
+terminal UI starts a gateway through the container's s6 supervisor and fails
+with `gateway inaccessible: service_manager_unavailable` without it. No
+messaging platform (Telegram, Discord, ...) is configured, so none connects,
+and the gateway's local API server listens on loopback only. The Chat tab
+embeds the full Hermes terminal UI in the browser. DockTail publishes the
+dashboard as the private Tailscale Service `hermes` on HTTPS port `443`. No
+host port is published.
 
 Hermes signs in with a **ChatGPT/Codex subscription** (the `openai-codex`
 provider). It has no local model and no API key to manage.
@@ -235,11 +239,13 @@ that threat model, not just "add a password."
 
 **Exposure**
 - No messaging integrations are configured. The container's command is
-  `dashboard --host 0.0.0.0 --no-open`, not `gateway run`: no bot token, no
-  paired chat account, no OpenAI-compatible API server. This is a
-  *current-configuration* fact, not a structural guarantee: the dashboard's
-  own Channels/MCP/Cron pages let an authenticated session configure those
-  later. The dashboard credential is therefore the actual control; treat
+  `gateway run` with `HERMES_DASHBOARD=1`, so the gateway runtime is up, but
+  with no bot token and no paired chat account it has no platform to connect
+  to, and its OpenAI-compatible API server is bound to `127.0.0.1` inside the
+  container (the sandbox cannot reach it). This is a *current-configuration*
+  fact, not a structural guarantee: the dashboard's own Channels/MCP/Cron
+  pages let an authenticated session configure those later. The dashboard
+  credential is therefore the actual control; treat
   `HERMES_DASHBOARD_PASSWORD` with the same care as the Tailscale OAuth
   secret.
 - Dashboard auth is mandatory: Hermes refuses to bind to a non-loopback
