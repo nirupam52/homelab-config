@@ -78,6 +78,10 @@ services:
       # The dashboard's Files tab browses only this directory (default: all of
       # /opt/data, including auth.json). It is the sandbox's /outputs.
       HERMES_DASHBOARD_FILES_ROOT: /outputs
+      # Hermes's file tools (write, patch) refuse any path outside this list.
+      # The image default is /opt/data, which is Hermes's own state and not
+      # where the sandbox's files are.
+      HERMES_WRITE_SAFE_ROOT: /outputs:/home/agent
     volumes:
       - /mnt/ssd/homelab/apps/hermes-agent/data:/opt/data
       - /mnt/ssd/homelab/apps/hermes-agent/ssh/id_ed25519:/run/hermes-ssh/id_ed25519:ro
