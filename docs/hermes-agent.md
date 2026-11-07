@@ -121,8 +121,18 @@ agent wrote can run on the dashboard's origin.
 
 - **Instructions to the agent** are in
   [`apps/hermes-agent/AGENTS.md`](../apps/hermes-agent/AGENTS.md), which every
-  reconcile installs as `outputs/AGENTS.md`: put deliverables in
-  `/outputs/<task>/`, keep virtualenvs and caches in `~`, never `chmod 600`.
+  reconcile installs as `outputs/AGENTS.md`. It says where to put
+  deliverables (`/outputs/<task>/`, virtualenvs and caches in `~`, never
+  `chmod 600`) and briefs the agent on its environment: no root, read-only
+  root filesystem, resource caps, the proxy allowlist, nothing reachable from
+  outside, and that it should report a blocked host or missing package to you
+  (naming `egress/dev.conf` or `sandbox/Dockerfile`) rather than work around
+  it. The agent has no access to the repo or to these docs, and the briefing
+  deliberately names no hostnames, ports or secrets: those would drift from
+  the config or hand an attacker a map. Update it when you change limits.
+  Hermes loads only one project context file (`.hermes.md` wins over
+  `AGENTS.md`), so a `.hermes.md` in `/outputs`, for example inside a repo the
+  agent clones, replaces it; treat it as guidance, not a control.
 - **Containment**: the tab refuses anything outside `/outputs`, `..`
   traversal, and symlinks that resolve outside it (tested against links to
   `auth.json` and `/opt/data`). The refusal is all-or-nothing per folder: one
