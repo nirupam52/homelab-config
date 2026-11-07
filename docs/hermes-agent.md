@@ -30,7 +30,7 @@ flowchart LR
 | Service | Role | Holds | Network |
 |---|---|---|---|
 | `hermes` | Dashboard, model calls, memory, skills | ChatGPT login (`data/auth.json`), SSH client key | `llm`, `link` (both internal) |
-| `hermes-sandbox` | Runs every shell command, file read/write and `execute_code` call Hermes makes | Nothing secret. Its home is `workspace/`. | `dev`, `link` (both internal) |
+| `hermes-sandbox` | Runs every shell command, file read/write and `execute_code` call Hermes makes | Nothing secret. Its home is `workspace/`; it writes deliverables to `outputs/`. | `dev`, `link` (both internal) |
 | `egress-llm` | Squid: HTTPS to OpenAI only | — | `llm` + `internet` |
 | `egress-dev` | Squid: HTTPS to registries and GitHub only | — | `dev` + `internet` |
 
@@ -108,6 +108,40 @@ the results come back through the model.
 - **Search results are untrusted input.** Keep personal data (private notes,
   mail, credentials) out of this agent's memory and context.
 
+## Artifacts: the Files tab
+
+Everything the agent creates is meant to be fetched from the dashboard's
+**Files** tab. The agent starts in `/outputs` (`terminal.cwd`), which is
+`apps/hermes-agent/outputs/` on the SSD: read-write in the sandbox,
+**read-only** in the `hermes` container. `HERMES_DASHBOARD_FILES_ROOT=/outputs`
+points the tab at it (upstream's default is `/opt/data`, Hermes's own state,
+which the tab then no longer shows). HTML, Markdown, images, source files and
+compiled programs all download byte-for-byte, as attachments, so nothing the
+agent wrote can run on the dashboard's origin.
+
+- **Instructions to the agent** are in
+  [`apps/hermes-agent/AGENTS.md`](../apps/hermes-agent/AGENTS.md), which every
+  reconcile installs as `outputs/AGENTS.md`: put deliverables in
+  `/outputs/<task>/`, keep virtualenvs and caches in `~`, never `chmod 600`.
+- **Containment**: the tab refuses anything outside `/outputs`, `..`
+  traversal, and symlinks that resolve outside it (tested against links to
+  `auth.json` and `/opt/data`). The refusal is all-or-nothing per folder: one
+  symlink that points outside makes the whole folder unlistable (`403 Path
+  outside managed files root`). Python virtualenvs do this
+  (`python -> /usr/bin/python3`), which is why `AGENTS.md` keeps them in `~`.
+  Fix a folder by deleting the link or `python3 -m venv --copies`.
+- **Limits**: files must be readable by uid 10000, so a file the agent
+  `chmod 600`s cannot be downloaded. Downloads are capped at 100 MiB. The tab
+  has no preview (a download is not rendered in the browser), and its
+  upload, new folder and delete buttons fail because the mount is read-only;
+  ask the agent to delete things.
+- **File tools**: Hermes's write and patch tools only touch paths inside
+  `HERMES_WRITE_SAFE_ROOT`. The image sets it to `/opt/data`, which refuses
+  every sandbox path, so `compose.yaml` sets it to `/outputs:/home/agent`.
+- **Raw API**: `/api/fs/list?path=/home/agent/...` and `/api/fs/download?path=`
+  read the sandbox's whole home over SSH, using the `terminal.ssh_*` keys in
+  `config.yaml`. They have no UI.
+
 ## The sandbox
 
 `hermes-sandbox` is a Debian container built on the Pi from
@@ -115,8 +149,9 @@ the results come back through the model.
 pip and venv, Node.js and npm, git, build-essential, ripgrep, jq and curl.
 
 - **Home directory**: `/mnt/ssd/homelab/apps/hermes-agent/workspace` is
-  mounted as `/home/agent`. Projects, `pip --user` installs, caches and npm
+  mounted as `/home/agent`. `pip --user` installs, virtualenvs, caches and npm
   state persist across restarts. It is unbounded; check its size now and then.
+  Deliverables go in `outputs/` instead (see above).
 - **Package installs** work through `egress-dev`. `pip install --user` is
   allowed (`PIP_BREAK_SYSTEM_PACKAGES=1`); virtualenvs work too.
 - **File sync**: Hermes's SSH backend copies its skills, its cache
@@ -139,7 +174,8 @@ pip and venv, Node.js and npm, git, build-essential, ripgrep, jq and curl.
     /mnt/ssd/homelab/apps/hermes-agent/sandbox
   sudo ./setup.sh reconcile hermes-agent
   ```
-- **Reset**: stop the stack and clear `workspace/` to wipe the agent's files.
+- **Reset**: stop the stack and clear `workspace/` (and `outputs/`, keeping
+  `AGENTS.md`, which reconcile reinstalls) to wipe the agent's files.
   The SSH host key lives in `ssh/`, not in `workspace/`, so Hermes keeps
   connecting.
 
@@ -193,9 +229,9 @@ running state always matches the repo. Data and workspace persist.
   memory and the Codex login live in `data/` and are not touched.
 - **Dashboard Config page:** edits last only until the next reconcile. Copy
   anything worth keeping into the repo file.
-- **Dashboard file panel:** it reads the `terminal.ssh_*` keys from this
-  file (not from the container environment) to browse and download files in
-  the sandbox.
+- **Dashboard Files tab** shows `outputs/` (see Artifacts). The
+  `terminal.ssh_*` keys in this file are what the dashboard's other file
+  features read; they are not taken from the container environment.
 - **Do not** change `terminal.backend`: commands would run inside the
   `hermes` container next to the ChatGPT login. Removing
   `sync_back_max_bytes: 0` lets the sandbox write into Hermes's skills.
@@ -272,7 +308,8 @@ volume and drop to the `hermes` user (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
 `SETUID`, `SETGID`).
 
 **Blast radius if the sandbox is fully compromised:** it can read and corrupt
-anything in `workspace/` and the files Hermes synced into it, burn CPU and
+anything in `workspace/` and `outputs/` (the `hermes` container only ever
+reads the latter) and the files Hermes synced into it, burn CPU and
 memory up to its limits, fetch from the allowlisted registries/GitHub, and
 open connections to the `hermes` container over `link` (the dashboard login
 is the only thing guarding that port, and it locks a client out for a short

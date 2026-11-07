@@ -20,6 +20,7 @@ SSD: /mnt/ssd
     ├── apps/hermes-agent/data/        Hermes state (auth.json, sessions, skills; config.yaml is installed from the repo)
     ├── apps/hermes-agent/ssh/         Hermes/sandbox SSH keys and known_hosts (root-only directory)
     ├── apps/hermes-agent/workspace/   Sandbox home directory (the agent's files)
+    ├── apps/hermes-agent/outputs/     Agent deliverables, shown in the dashboard Files tab (read-only in hermes)
     ├── apps/pihole/compose.yaml
     ├── apps/pihole/.env        Pi-hole password and Tailscale address
     ├── apps/pihole/data/       Pi-hole data
