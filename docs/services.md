@@ -11,10 +11,11 @@ advertised host, the usual URLs are:
 
 ## About DockTail
 
-DockTail needs read-only access to the Docker socket and the host Tailscale
-socket. This is a deliberate trade-off: Docker metadata and environment
-values are visible to the controller, but it cannot create or exec into
-containers through the read-only socket. DockTail is community-maintained
+DockTail needs access to the Docker socket and the host Tailscale socket.
+This is a deliberate trade-off. Mounting the socket `:ro` only makes the
+socket file read-only; it does not restrict the Docker API, so a compromise
+of DockTail (or of Dozzle, which mounts it the same way) is root on the host.
+DockTail is community-maintained
 AGPL software, and Tailscale Services is a public beta feature.
 
 ## Troubleshooting

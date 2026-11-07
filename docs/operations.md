@@ -17,7 +17,7 @@ SSD: /mnt/ssd
     ├── apps/hermes-agent/egress/      Squid allowlists (llm.conf, dev.conf)
     ├── apps/hermes-agent/sandbox/     Sandbox image build context
     ├── apps/hermes-agent/.env         Dashboard username/password/secret
-    ├── apps/hermes-agent/data/        Hermes state (config.yaml, auth.json, sessions, skills)
+    ├── apps/hermes-agent/data/        Hermes state (auth.json, sessions, skills; config.yaml is installed from the repo)
     ├── apps/hermes-agent/ssh/         Hermes/sandbox SSH keys and known_hosts (root-only directory)
     ├── apps/hermes-agent/workspace/   Sandbox home directory (the agent's files)
     ├── apps/pihole/compose.yaml

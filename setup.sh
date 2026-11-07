@@ -347,51 +347,29 @@ ensure_hermes_secret() {
     chown 10001:10001 "$HERMES_WORKSPACE"
     chmod 700 "$HERMES_WORKSPACE"
 
-    # data/ is writable by the hermes container, so never follow a link in
-    # it as root, and never chown or chmod anything inside it.
-    [ ! -L "$HERMES_CONFIG" ] || fail "$HERMES_CONFIG is a symlink; remove it and rerun"
-    if [ -f "$HERMES_CONFIG" ] && grep -Eq '^[[:space:]]*provider:[[:space:]]*"?llamacpp"?' "$HERMES_CONFIG"; then
-        fail "$HERMES_CONFIG still points at llama.cpp, which is no longer deployed; move it aside (it holds the old API key) and rerun"
-    fi
-    if [ ! -e "$HERMES_CONFIG" ]; then
-        # sync_back_max_bytes: 0 stops Hermes from copying files from the
-        # sandbox back into its own skills and cache directories.
-        (
-            umask 077
-            {
-                printf 'model:\n'
-                printf '  provider: "openai-codex"\n'
-                printf 'terminal:\n'
-                printf '  backend: "ssh"\n'
-                printf '  ssh_host: "hermes-sandbox"\n'
-                printf '  ssh_user: "agent"\n'
-                printf '  ssh_port: 2222\n'
-                printf '  ssh_key: "/run/hermes-ssh/id_ed25519"\n'
-                printf '  sync_back_max_bytes: 0\n'
-                printf 'approvals:\n'
-                printf '  mode: "manual"\n'
-                printf 'auth:\n'
-                printf '  adopt_external_logins: false\n'
-                printf 'web:\n'
-                printf '  search_backend: "openai-native"\n'
-                printf '  keyless_fallback: false\n'
-                printf '  keyless_rescue: false\n'
-            } > "$HERMES_CONFIG"
-        )
-    fi
+    # config.yaml is desired state: the repo copy replaces the live one on
+    # every reconcile. data/ is writable by the hermes container, so stage the
+    # file in $HERMES_DIR (root-only) and rename it into place: a rename
+    # replaces whatever is at the destination (even a symlink) instead of
+    # following it, and nothing else inside data/ is touched.
+    config_tmp=$(mktemp "$HERMES_DIR/.config.yaml.XXXXXX")
+    install -m 0640 -o 10000 -g 10000 "$REPO_ROOT/apps/hermes-agent/config.yaml" "$config_tmp"
+    mv -f "$config_tmp" "$HERMES_CONFIG"
 }
 
 compose_up() {
     name=$1
     compose_file=$2
     env_file=$3
+    up_flags=${4:-}
     if [ -n "$env_file" ]; then
         set -- --project-name "$name" --env-file "$env_file" -f "$compose_file"
     else
         set -- --project-name "$name" -f "$compose_file"
     fi
     docker compose "$@" config --quiet
-    docker compose "$@" up -d
+    # shellcheck disable=SC2086
+    docker compose "$@" up -d $up_flags
 }
 
 reconcile_project() {
@@ -417,10 +395,12 @@ reconcile_project() {
             sync_tree "$REPO_ROOT/apps/hermes-agent/sandbox" "$HERMES_DIR/sandbox"
             ensure_hermes_secret
             # Built with plain `docker build` (not Compose's buildx-based
-            # build, which needs buildx 0.17+); Compose then recreates the
-            # container if the image changed.
+            # build, which needs buildx 0.17+).
             docker build -t hermes-sandbox:local "$HERMES_DIR/sandbox"
-            compose_up hermes-agent "$HOMELAB_ROOT/apps/hermes-agent/compose.yaml" "$HERMES_ENV"
+            # Compose does not notice changed contents of config.yaml or the
+            # Squid files, so recreate the containers every time: the result
+            # always matches the repo, and the data and workspace persist.
+            compose_up hermes-agent "$HOMELAB_ROOT/apps/hermes-agent/compose.yaml" "$HERMES_ENV" --force-recreate
             ;;
         *)
             fail "unknown project '$1' (expected docktail, pihole, dozzle, or hermes-agent)"

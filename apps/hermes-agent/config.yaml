@@ -1,0 +1,50 @@
+# Desired Hermes settings. `sudo ./setup.sh reconcile hermes-agent` installs
+# this file over data/config.yaml every time, so edits made on the dashboard's
+# Config page last only until the next reconcile. Change settings here.
+# To roll back: git revert, then reconcile.
+
+model:
+  provider: "openai-codex"
+  default: gpt-6.1-terra
+  base_url: https://chatgpt.com/backend-api/codex
+  api_mode: codex_responses
+
+# Shell, file and execute_code tools run in the keyless hermes-sandbox
+# container over SSH. Switching the backend away from "ssh" runs commands in
+# the hermes container, next to the ChatGPT login.
+terminal:
+  backend: "ssh"
+  ssh_host: "hermes-sandbox"
+  ssh_user: "agent"
+  ssh_port: 2222
+  ssh_key: "/run/hermes-ssh/id_ed25519"
+  # 0 stops the sandbox from copying files back into Hermes's own skills.
+  sync_back_max_bytes: 0
+
+approvals:
+  mode: "manual"
+
+auth:
+  adopt_external_logins: false
+
+web:
+  search_backend: "openai-native"
+  keyless_fallback: false
+  keyless_rescue: false
+
+# The browser toolset runs model-written Python (browser_exec) inside the
+# hermes container, outside the sandbox and next to auth.json. Keep it off.
+agent:
+  disabled_toolsets: ["browser"]
+
+telemetry:
+  shared_metrics:
+    enabled: false
+    send: false
+    offer_version: 2
+
+dashboard:
+  theme: mono
+
+# Matches the pinned image; startup migrations rewrite this file otherwise.
+_config_version: 51
