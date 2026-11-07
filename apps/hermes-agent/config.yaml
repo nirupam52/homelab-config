@@ -18,6 +18,9 @@ terminal:
   ssh_user: "agent"
   ssh_port: 2222
   ssh_key: "/run/hermes-ssh/id_ed25519"
+  # Where the agent starts every command. Anything it creates here shows up in
+  # the dashboard's Files tab (the hermes container mounts it read-only).
+  cwd: "/outputs"
   # 0 stops the sandbox from copying files back into Hermes's own skills.
   sync_back_max_bytes: 0
 

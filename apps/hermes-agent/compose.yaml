@@ -75,10 +75,14 @@ services:
       TERMINAL_SSH_PORT: "2222"
       TERMINAL_SSH_USER: agent
       TERMINAL_SSH_KEY: /run/hermes-ssh/id_ed25519
+      # The dashboard's Files tab browses only this directory (default: all of
+      # /opt/data, including auth.json). It is the sandbox's /outputs.
+      HERMES_DASHBOARD_FILES_ROOT: /outputs
     volumes:
       - /mnt/ssd/homelab/apps/hermes-agent/data:/opt/data
       - /mnt/ssd/homelab/apps/hermes-agent/ssh/id_ed25519:/run/hermes-ssh/id_ed25519:ro
       - /mnt/ssd/homelab/apps/hermes-agent/ssh/known_hosts:/etc/ssh/ssh_known_hosts:ro
+      - /mnt/ssd/homelab/apps/hermes-agent/outputs:/outputs:ro
     command: ["gateway", "run"]
     read_only: true
     tmpfs:
@@ -120,6 +124,7 @@ services:
       no_proxy: localhost,127.0.0.1
     volumes:
       - /mnt/ssd/homelab/apps/hermes-agent/workspace:/home/agent
+      - /mnt/ssd/homelab/apps/hermes-agent/outputs:/outputs
       - /mnt/ssd/homelab/apps/hermes-agent/ssh/authorized_keys:/etc/hermes-ssh/authorized_keys:ro
       - /mnt/ssd/homelab/apps/hermes-agent/ssh/ssh_host_ed25519_key:/etc/hermes-ssh/ssh_host_ed25519_key:ro
     read_only: true

@@ -20,6 +20,7 @@ HERMES_DATA=$HERMES_DIR/data
 HERMES_CONFIG=$HERMES_DATA/config.yaml
 HERMES_SSH=$HERMES_DIR/ssh
 HERMES_WORKSPACE=$HERMES_DIR/workspace
+HERMES_OUTPUTS=$HERMES_DIR/outputs
 
 fail() {
     printf 'setup: %s\n' "$1" >&2
@@ -317,7 +318,7 @@ ensure_hermes_secret() {
     grep -Eq '^HERMES_DASHBOARD_SECRET=.+$' "$HERMES_ENV" || fail "HERMES_DASHBOARD_SECRET is missing from $HERMES_ENV"
     chmod 600 "$HERMES_ENV"
 
-    mkdir -p "$HERMES_DATA" "$HERMES_SSH" "$HERMES_WORKSPACE"
+    mkdir -p "$HERMES_DATA" "$HERMES_SSH" "$HERMES_WORKSPACE" "$HERMES_OUTPUTS"
 
     # SSH material lives in this root-only directory and is mounted file by
     # file, so nothing the agent can write controls it:
@@ -346,6 +347,12 @@ ensure_hermes_secret() {
     # hermes-sandbox runs as uid 10001; its home is this directory.
     chown 10001:10001 "$HERMES_WORKSPACE"
     chmod 700 "$HERMES_WORKSPACE"
+
+    # The sandbox writes here and the hermes container reads it (read-only,
+    # as uid 10000) for the dashboard's Files tab, so it must be world
+    # readable. Only the top directory is changed, never its contents.
+    chown 10001:10001 "$HERMES_OUTPUTS"
+    chmod 755 "$HERMES_OUTPUTS"
 
     # config.yaml is desired state: the repo copy replaces the live one on
     # every reconcile. data/ is writable by the hermes container, so stage the
