@@ -354,6 +354,14 @@ ensure_hermes_secret() {
     chown 10001:10001 "$HERMES_OUTPUTS"
     chmod 755 "$HERMES_OUTPUTS"
 
+    # Standing instructions for the agent, read from its working directory.
+    # The agent can write in outputs/, so rename a staged copy into place
+    # (never write through a path it controls): a rename replaces a symlink
+    # instead of following it, and -T refuses to move into a directory.
+    agents_tmp=$(mktemp "$HERMES_DIR/.AGENTS.md.XXXXXX")
+    install -m 0644 "$REPO_ROOT/apps/hermes-agent/AGENTS.md" "$agents_tmp"
+    mv -fT "$agents_tmp" "$HERMES_OUTPUTS/AGENTS.md"
+
     # config.yaml is desired state: the repo copy replaces the live one on
     # every reconcile. data/ is writable by the hermes container, so stage the
     # file in $HERMES_DIR (root-only) and rename it into place: a rename
