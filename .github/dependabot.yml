@@ -24,7 +24,6 @@ updates:
       default-days: 5
       semver-major-days: 14
     open-pull-requests-limit: 5
-    labels: [dependencies, docker]
     commit-message:
       prefix: deps
 
@@ -38,7 +37,6 @@ updates:
       timezone: America/Chicago
     cooldown:
       default-days: 5
-    labels: [dependencies, docker]
     commit-message:
       prefix: deps
 
@@ -54,6 +52,5 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-    labels: [dependencies, github-actions]
     commit-message:
       prefix: ci

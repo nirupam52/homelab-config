@@ -13,8 +13,9 @@ repositories.
 | `docker` | Digest of the base image in `apps/hermes-agent/sandbox/Dockerfile`. |
 | `github-actions` | Workflow action pins, grouped into one PR. |
 
-Releases younger than 5 days (14 for major versions) are skipped by
-`cooldown`, so a bad release can be pulled upstream before it reaches a PR.
+Releases younger than 5 days (14 for major versions of compose images) are
+skipped by `cooldown`, so a bad release can be pulled upstream before it
+reaches a PR.
 Security updates ignore the cooldown.
 
 Merging a PR changes the repo only. Deploy it on the Pi:
@@ -32,8 +33,13 @@ Review notes:
 - **Pi-hole** uses date-based versions (`2026.10.0`). Dependabot treats them as
   semver-like, so check that the PR moves forward.
 - Packages installed with `apt` in the sandbox Dockerfile are not tracked by
-  Dependabot. Rebuild picks up current Debian packages: `sudo ./setup.sh
-  reconcile hermes-agent`.
+  Dependabot, and `reconcile` reuses Docker's cached `apt` layer. To pick up
+  current Debian packages, rebuild without the cache, then reconcile:
+  ```sh
+  sudo docker build --no-cache -t hermes-sandbox:local \
+    /mnt/ssd/homelab/apps/hermes-agent/sandbox
+  sudo ./setup.sh reconcile hermes-agent
+  ```
 
 ## CI
 
@@ -71,6 +77,11 @@ gh api -X PUT $R/vulnerability-alerts
 gh api -X PUT $R/automated-security-fixes
 gh api -X PUT $R/private-vulnerability-reporting
 gh api -X PATCH $R -F delete_branch_on_merge=true
+gh api -X PATCH $R \
+  -f 'security_and_analysis[secret_scanning][status]=enabled' \
+  -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'
+gh api -X PUT $R/actions/permissions/workflow \
+  -f default_workflow_permissions=read -F can_approve_pull_request_reviews=false
 ```
 
 ### Ruleset on `main`
