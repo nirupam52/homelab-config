@@ -4,7 +4,7 @@ set -eu
 LC_ALL=C
 export LC_ALL
 
-REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 SSD_MOUNT=/mnt/ssd
 HOMELAB_ROOT=$SSD_MOUNT/homelab
 DOCKTAIL_ENV=$HOMELAB_ROOT/infra/docktail/.env
@@ -139,7 +139,7 @@ mount_ssd() {
     mkdir -p "$SSD_MOUNT"
 
     if ! mountpoint -q "$SSD_MOUNT"; then
-        if grep -Eq "^[[:space:]]*UUID=[^[:space:]]+[[:space:]]+$SSD_MOUNT[[:space:]]" /etc/fstab; then
+        if grep -Eq "^[[:space:]]*UUID=[^[:space:]]+[[:space:]]+${SSD_MOUNT}[[:space:]]" /etc/fstab; then
             mount "$SSD_MOUNT" || fail "could not mount $SSD_MOUNT from /etc/fstab"
         else
             printf '%s\n' 'The SSD partition must already contain the data you want to keep.'
@@ -248,7 +248,7 @@ configure_firewall() {
 
 disable_service() {
     unit=$1
-    if systemctl list-unit-files --no-legend "$unit" 2>/dev/null | grep -q "^$unit[[:space:]]"; then
+    if systemctl list-unit-files --no-legend "$unit" 2>/dev/null | grep -q "^${unit}[[:space:]]"; then
         systemctl disable --now "$unit"
     fi
 }

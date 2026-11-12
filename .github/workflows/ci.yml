@@ -19,7 +19,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: shellcheck setup.sh
+      # Warnings and errors only. The remaining info-level findings are
+      # intentional: an unquoted package list and SC2094 on `>> "$BOOT_CONFIG"`.
+      - run: shellcheck --severity=warning setup.sh
 
   compose:
     runs-on: ubuntu-latest
