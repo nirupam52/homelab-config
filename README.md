@@ -48,7 +48,6 @@ reachable only through Tailscale — no exposed ports except Pi-hole DNS.
 | [docs/hermes-agent.md](docs/hermes-agent.md) | Sandboxed agent deployment, Codex sign-in, egress allowlists, security |
 | [docs/dns.md](docs/dns.md) | Tailnet-wide DNS via Pi-hole |
 | [docs/operations.md](docs/operations.md) | Verify/update commands, directory layout, recovery |
-| [docs/github-security.md](docs/github-security.md) | Dependabot, CI, image scanning, repository security settings |
 
 ## Layout
 
