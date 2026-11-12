@@ -13,9 +13,8 @@ repositories.
 | `docker` | Digest of the base image in `apps/hermes-agent/sandbox/Dockerfile`. |
 | `github-actions` | Workflow action pins, grouped into one PR. |
 
-Releases younger than 5 days (14 for major versions of compose images) are
-skipped by `cooldown`, so a bad release can be pulled upstream before it
-reaches a PR.
+Releases younger than 5 days are skipped by `cooldown`, so a bad release can
+be pulled upstream before it reaches a PR.
 Security updates ignore the cooldown.
 
 Merging a PR changes the repo only. Deploy it on the Pi:
