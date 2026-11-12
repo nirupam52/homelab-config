@@ -1,0 +1,55 @@
+version: 2
+
+# Every image in this repo is pinned as tag@sha256. Dependabot bumps both the
+# tag and the digest in one PR. One PR per service, never grouped: each bump
+# changes a container on the Pi, so each should be reviewed and reconciled on
+# its own (`sudo ./setup.sh reconcile <project>`).
+#
+# `cooldown` skips releases younger than the given age, so a bad release can be
+# yanked before it reaches a PR. Security updates ignore it.
+
+updates:
+  - package-ecosystem: docker-compose
+    directories:
+      - /apps/dozzle
+      - /apps/hermes-agent
+      - /apps/pihole
+      - /infra/docktail
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Chicago
+    cooldown:
+      default-days: 5
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+
+  # Digest of the sandbox's debian base image (apps/hermes-agent/sandbox).
+  - package-ecosystem: docker
+    directory: /apps/hermes-agent/sandbox
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Chicago
+    cooldown:
+      default-days: 5
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Chicago
+    cooldown:
+      default-days: 5
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
