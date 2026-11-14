@@ -1,0 +1,16 @@
+# Incus profile shared by every agent VM. `sudo ./setup.sh bootstrap`
+# replaces the live profile with this file. Per-VM CPU, memory and disk size
+# live in vms/<name>/vm.conf.
+description: "Agent VM: SSD storage, NAT bridge, agent-egress ACL"
+config:
+  boot.autostart: "true"
+devices:
+  root:
+    type: disk
+    path: /
+    pool: default
+  eth0:
+    type: nic
+    name: eth0
+    network: incusbr0
+    security.acls: agent-egress

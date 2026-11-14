@@ -12,6 +12,7 @@ PIHOLE_ENV=$HOMELAB_ROOT/apps/pihole/.env
 BOOT_CONFIG=
 SECRET_VALUE=
 TAILSCALE_IPV4=
+INCUS_POOL_DIR=$SSD_MOUNT/incus
 MODE=full
 PROJECT=
 
@@ -28,8 +29,9 @@ No argument: runs bootstrap then reconcile. Use for the first run, after a
 reboot, or when unsure which mode a change needs.
 
 bootstrap: applies host-level state only (packages, SSD mount, Docker data
-root, Tailscale connection, boot overlays, firewall, disabled services). It
-never formats a disk. Idempotent but rarely needed once a host is set up.
+root, Tailscale connection, boot overlays, firewall, disabled services,
+Incus for agent VMs). It never formats a disk. Idempotent but rarely needed
+once a host is set up.
 
 reconcile [project]: syncs Compose files and secrets, then starts or updates
 containers. project is one of: docktail, pihole, dozzle. Omit it to
@@ -213,7 +215,9 @@ configure_boot() {
 
 configure_firewall() {
     printf '%s\n' '== Configure Tailscale-only firewall =='
-    if ufw show added | grep '^ufw allow ' | grep -vE ' on tailscale0([[:space:]]|$)' | grep -q .; then
+    # The only non-Tailscale inbound rules allowed are the DHCP/DNS ones
+    # configure_incus adds for the agent VM bridge.
+    if ufw show added | grep '^ufw allow ' | grep -vE ' on (tailscale0|incusbr0)([[:space:]]|$)' | grep -q .; then
         fail 'UFW has an existing non-Tailscale allow rule; remove it manually before continuing'
     fi
 
@@ -226,6 +230,57 @@ configure_firewall() {
     ufw default allow outgoing
     ufw allow in on tailscale0
     ufw --force enable
+}
+
+configure_incus() {
+    printf '%s\n' '== Configure Incus for agent VMs =='
+    [ -c /dev/kvm ] || fail '/dev/kvm is missing; this kernel cannot run virtual machines'
+    INCUS_PACKAGES='incus qemu-system-arm qemu-efi-aarch64'
+    NEED_INSTALL=0
+    for pkg in $INCUS_PACKAGES; do
+        dpkg -s "$pkg" >/dev/null 2>&1 || NEED_INSTALL=1
+    done
+    if [ "$NEED_INSTALL" -eq 1 ]; then
+        apt-get update
+        # shellcheck disable=SC2086
+        apt-get install -y $INCUS_PACKAGES || \
+            fail 'could not install Incus (Debian 12 needs bookworm-backports enabled first)'
+    fi
+    systemctl enable --now incus.service
+    incus admin waitready --timeout=60
+    # ACLs on bridge networks need the nftables firewall driver.
+    incus info | grep -Eq '^[[:space:]]+firewall:[[:space:]]+nftables$' || \
+        fail 'Incus is not using the nftables firewall driver; network ACLs would not apply'
+
+    # VM disks, the image cache and backups all live on the SSD.
+    incus storage show default >/dev/null 2>&1 || \
+        incus storage create default dir source="$INCUS_POOL_DIR"
+    incus storage show default | grep -q '^driver: dir$' && \
+        [ "$(incus storage get default source)" = "$INCUS_POOL_DIR" ] || \
+        fail "Incus pool 'default' is not a dir pool at $INCUS_POOL_DIR; move or delete it first"
+    for volume in images backups; do
+        incus storage volume show default "$volume" >/dev/null 2>&1 || \
+            incus storage volume create default "$volume"
+        [ "$(incus config get "storage.${volume}_volume")" = "default/$volume" ] || \
+            incus config set "storage.${volume}_volume=default/$volume"
+    done
+
+    # The ACL's carve-outs assume exactly this address; IPv6 stays off so
+    # the IPv4-only ACL covers everything.
+    incus network show incusbr0 >/dev/null 2>&1 || incus network create incusbr0
+    incus network set incusbr0 ipv4.address=10.250.0.1/24 ipv4.nat=true ipv6.address=none
+    incus network acl show agent-egress >/dev/null 2>&1 || incus network acl create agent-egress
+    incus network acl edit agent-egress < "$REPO_ROOT/infra/incus/agent-egress.yaml"
+    incus profile show agent-vm >/dev/null 2>&1 || incus profile create agent-vm
+    incus profile edit agent-vm < "$REPO_ROOT/infra/incus/agent-vm.yaml"
+
+    # VMs get DHCP and DNS from Incus on the bridge. UFW's forward policy
+    # (and Docker's) is DROP, so VM traffic must be routed explicitly;
+    # replies come back through UFW's conntrack rule. Which destinations a VM
+    # may reach is decided by the agent-egress ACL, not here.
+    ufw allow in on incusbr0 to any port 67 proto udp
+    ufw allow in on incusbr0 to any port 53
+    ufw route allow in on incusbr0
 }
 
 disable_service() {
@@ -347,6 +402,7 @@ run_bootstrap() {
     configure_boot
     configure_firewall
     configure_services
+    configure_incus
 }
 
 case "$MODE" in

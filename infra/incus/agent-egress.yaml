@@ -1,0 +1,57 @@
+# Network ACL for agent VMs, applied to each VM's NIC by the agent-vm profile.
+# `sudo ./setup.sh bootstrap` replaces the live ACL with this file.
+#
+# Incus ignores list order: drop/reject rules win over allow rules, and
+# anything unmatched is rejected. A NIC-level ACL gets no automatic DHCP/DNS
+# exemption, so the bridge address (10.250.0.1) and the DHCP broadcast
+# address are cut out of the reject ranges and allowed explicitly below.
+#
+# Inbound: only DHCP replies. Tailscale traffic still reaches the VM because
+# it rides on connections the VM opened.
+description: "Agent VMs: web and Tailscale out; no LAN, tailnet, host, or inbound"
+egress:
+  - action: reject
+    description: "LAN, tailnet, this host, other VMs, link-local, multicast"
+    destination: 10.0.0.0-10.250.0.0,10.250.0.2-10.255.255.255,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,224.0.0.0-255.255.255.254
+    state: enabled
+  - action: allow
+    description: "DHCP to Incus on the bridge"
+    destination: 10.250.0.1,255.255.255.255
+    protocol: udp
+    destination_port: "67"
+    state: enabled
+  - action: allow
+    description: "DNS to Incus on the bridge"
+    destination: 10.250.0.1
+    protocol: udp
+    destination_port: "53"
+    state: enabled
+  - action: allow
+    description: "DNS to Incus on the bridge (TCP)"
+    destination: 10.250.0.1
+    protocol: tcp
+    destination_port: "53"
+    state: enabled
+  - action: allow
+    description: "HTTP and HTTPS"
+    protocol: tcp
+    destination_port: "80,443"
+    state: enabled
+  - action: allow
+    description: "QUIC, NTP, Tailscale (direct + STUN)"
+    protocol: udp
+    destination_port: "443,123,41641,3478"
+    state: enabled
+  - action: allow
+    description: "ICMP (ping, path MTU discovery)"
+    protocol: icmp4
+    state: enabled
+ingress:
+  - action: allow
+    description: "DHCP replies from Incus"
+    source: 10.250.0.1
+    protocol: udp
+    source_port: "67"
+    destination_port: "68"
+    state: enabled
+config: {}
