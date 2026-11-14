@@ -21,7 +21,7 @@ jobs:
           persist-credentials: false
       # Warnings and errors only. The remaining info-level findings are
       # intentional: an unquoted package list and SC2094 on `>> "$BOOT_CONFIG"`.
-      - run: shellcheck --severity=warning setup.sh
+      - run: shellcheck --severity=warning setup.sh vms/*.sh vms/*/*.sh
 
   compose:
     runs-on: ubuntu-latest

@@ -36,6 +36,11 @@ once a host is set up.
 reconcile [project]: syncs Compose files and secrets, then starts or updates
 containers. project is one of: docktail, pihole, dozzle. Omit it to
 reconcile all three. Fails fast if bootstrap has never completed.
+
+reconcile <vm>: creates the agent VM vms/<vm>/ describes if it is missing,
+applies its CPU/memory/disk limits, joins it to the tailnet once, and re-runs
+its provisioning script. vm is one of: coder, hermes. VMs are never part of a
+plain `reconcile`, so routine container updates never touch running agents.
 EOF
 }
 
@@ -353,6 +358,69 @@ compose_up() {
     docker compose "$@" up -d $up_flags
 }
 
+vm_config_set() {
+    [ "$(incus config get "$1" "$2")" = "$3" ] || incus config set "$1" "$2=$3"
+}
+
+join_tailnet() {
+    name=$1
+    if ! incus exec "$name" -- tailscale status >/dev/null 2>&1; then
+        printf 'Join %s to the tailnet with a pre-approved, single-use tag:agent auth key.\n' "$name"
+        ask_secret "Tailscale auth key for $name"
+        [ -n "$SECRET_VALUE" ] || fail 'Tailscale auth key cannot be empty'
+        printf '%s' "$SECRET_VALUE" | \
+            incus exec "$name" -- sh -c 'umask 077 && cat > /run/tailscale-authkey'
+        joined=0
+        incus exec "$name" -- tailscale up --auth-key=file:/run/tailscale-authkey \
+            --advertise-tags=tag:agent --hostname="$name" --ssh --accept-dns=false || joined=$?
+        incus exec "$name" -- rm -f /run/tailscale-authkey
+        [ "$joined" -eq 0 ] || fail "$name could not join the tailnet"
+    fi
+    # VMs resolve names through Incus on the bridge: Pi-hole is on the
+    # tailnet, which tag:agent cannot reach.
+    incus exec "$name" -- tailscale set --ssh --accept-dns=false --auto-update
+}
+
+reconcile_vm() {
+    name=$1
+    command -v incus >/dev/null 2>&1 || fail "Incus is not installed; run 'sudo ./setup.sh bootstrap' first"
+    # shellcheck disable=SC1090
+    . "$REPO_ROOT/vms/$name/vm.conf"
+
+    if incus info "$name" >/dev/null 2>&1; then
+        # Memory and CPU changes may only apply after the VM restarts; disks
+        # can grow but never shrink.
+        vm_config_set "$name" limits.cpu "$VM_CPUS"
+        vm_config_set "$name" limits.memory "$VM_MEMORY"
+        [ "$(incus config device get "$name" root size)" = "$VM_DISK" ] || \
+            incus config device set "$name" root size="$VM_DISK"
+        incus info "$name" | grep -q '^Status: RUNNING$' || incus start "$name"
+    else
+        incus launch "$VM_IMAGE" "$name" --vm --profile agent-vm \
+            --config limits.cpu="$VM_CPUS" --config limits.memory="$VM_MEMORY" \
+            --device root,size="$VM_DISK"
+    fi
+
+    tries=0
+    until incus exec "$name" -- true >/dev/null 2>&1; do
+        tries=$((tries + 1))
+        [ "$tries" -le 90 ] || fail "$name did not come up within 3 minutes"
+        sleep 2
+    done
+    # First boot: let cloud-init finish before apt runs. A degraded result
+    # is not fatal; base.sh below fails loudly if the VM is unusable.
+    incus exec "$name" -- cloud-init status --wait >/dev/null 2>&1 || true
+
+    # Provisioning scripts are desired state: replace the VM's copy wholesale.
+    incus exec "$name" -- rm -rf /opt/homelab
+    incus exec "$name" -- mkdir -p /opt/homelab
+    incus file push "$REPO_ROOT/vms/base.sh" "$name/opt/homelab/base.sh"
+    incus file push -r "$REPO_ROOT/vms/$name" "$name/opt/homelab/"
+    incus exec "$name" -- sh /opt/homelab/base.sh
+    join_tailnet "$name"
+    incus exec "$name" -- sh "/opt/homelab/$name/provision.sh"
+}
+
 reconcile_project() {
     printf '== Reconcile %s ==\n' "$1"
     case "$1" in
@@ -371,7 +439,9 @@ reconcile_project() {
             compose_up dozzle "$HOMELAB_ROOT/apps/dozzle/compose.yaml" ''
             ;;
         *)
-            fail "unknown project '$1' (expected docktail, pihole, or dozzle)"
+            [ -f "$REPO_ROOT/vms/$1/vm.conf" ] || \
+                fail "unknown project '$1' (expected docktail, pihole, dozzle, or a VM under vms/)"
+            reconcile_vm "$1"
             ;;
     esac
 }
