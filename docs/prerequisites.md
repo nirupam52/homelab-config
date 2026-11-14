@@ -5,8 +5,9 @@ Complete these before running `setup.sh`.
 ## 1. Tailscale admin console
 
 1. Enable **MagicDNS** and **HTTPS certificates**.
-2. Create the `tag:server` and `tag:container` tags. Allow `autogroup:admin`
-   to own `tag:server`, and allow `tag:server` to own `tag:container`.
+2. Create the `tag:server`, `tag:container` and `tag:agent` tags. Allow
+   `autogroup:admin` to own `tag:server` and `tag:agent`, and allow
+   `tag:server` to own `tag:container`.
 3. Create a DockTail OAuth client with **General → Services → Write**
    permission, and attach `tag:container` to it. Keep the client ID and
    secret ready for the setup prompts.
@@ -16,7 +17,8 @@ Complete these before running `setup.sh`.
 {
   "tagOwners": {
     "tag:server": ["autogroup:admin"],
-    "tag:container": ["tag:server"]
+    "tag:container": ["tag:server"],
+    "tag:agent": ["autogroup:admin"]
   },
   "autoApprovers": {
     "services": {
@@ -26,8 +28,13 @@ Complete these before running `setup.sh`.
   "grants": [
     {
       "src": ["autogroup:member"],
-      "dst": ["svc:dozzle", "svc:pihole", "svc:hermes"],
+      "dst": ["svc:dozzle", "svc:pihole"],
       "ip": ["443"]
+    },
+    {
+      "src": ["autogroup:member"],
+      "dst": ["tag:agent"],
+      "ip": ["*"]
     }
   ],
   "acls": [
@@ -39,10 +46,22 @@ Complete these before running `setup.sh`.
       "src": ["autogroup:member"],
       "dst": ["tag:server"],
       "users": ["autogroup:nonroot", "root"]
+    },
+    {
+      "action": "accept",
+      "src": ["autogroup:member"],
+      "dst": ["tag:agent"],
+      "users": ["agent"]
     }
   ]
 }
 ```
+
+`tag:agent` is for the [agent VMs](agent-vms.md). Your devices may open any
+port on them (SSH, the Hermes dashboard, dev-server previews). No rule has
+`tag:agent` as a source, so the VMs reach nothing on the tailnet. Keep it
+that way, and keep `tag:agent` out of `autoApprovers` (no subnet routes, exit
+nodes or Services) and out of Funnel.
 
 ## 2. SSD
 

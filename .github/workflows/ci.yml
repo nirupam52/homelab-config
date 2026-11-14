@@ -21,7 +21,7 @@ jobs:
           persist-credentials: false
       # Warnings and errors only. The remaining info-level findings are
       # intentional: an unquoted package list and SC2094 on `>> "$BOOT_CONFIG"`.
-      - run: shellcheck --severity=warning setup.sh
+      - run: shellcheck --severity=warning setup.sh vms/*.sh vms/*/*.sh
 
   compose:
     runs-on: ubuntu-latest
@@ -33,9 +33,6 @@ jobs:
       # values let `config` parse and validate them without any real secret.
       - name: Validate compose files
         env:
-          HERMES_DASHBOARD_USERNAME: ci
-          HERMES_DASHBOARD_PASSWORD: ci
-          HERMES_DASHBOARD_SECRET: ci
           PIHOLE_WEBPASSWORD: ci
           TAILSCALE_IPV4: 100.64.0.1
           TAILSCALE_OAUTH_CLIENT_ID: ci

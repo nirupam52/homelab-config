@@ -12,15 +12,9 @@ PIHOLE_ENV=$HOMELAB_ROOT/apps/pihole/.env
 BOOT_CONFIG=
 SECRET_VALUE=
 TAILSCALE_IPV4=
+INCUS_POOL_DIR=$SSD_MOUNT/incus
 MODE=full
 PROJECT=
-HERMES_DIR=$HOMELAB_ROOT/apps/hermes-agent
-HERMES_ENV=$HERMES_DIR/.env
-HERMES_DATA=$HERMES_DIR/data
-HERMES_CONFIG=$HERMES_DATA/config.yaml
-HERMES_SSH=$HERMES_DIR/ssh
-HERMES_WORKSPACE=$HERMES_DIR/workspace
-HERMES_OUTPUTS=$HERMES_DIR/outputs
 
 fail() {
     printf 'setup: %s\n' "$1" >&2
@@ -35,12 +29,18 @@ No argument: runs bootstrap then reconcile. Use for the first run, after a
 reboot, or when unsure which mode a change needs.
 
 bootstrap: applies host-level state only (packages, SSD mount, Docker data
-root, Tailscale connection, boot overlays, firewall, disabled services). It
-never formats a disk. Idempotent but rarely needed once a host is set up.
+root, Tailscale connection, boot overlays, firewall, disabled services,
+Incus for agent VMs). It never formats a disk. Idempotent but rarely needed
+once a host is set up.
 
 reconcile [project]: syncs Compose files and secrets, then starts or updates
-containers. project is one of: docktail, pihole, dozzle, hermes-agent. Omit
-it to reconcile all four. Fails fast if bootstrap has never completed.
+containers. project is one of: docktail, pihole, dozzle. Omit it to
+reconcile all three. Fails fast if bootstrap has never completed.
+
+reconcile <vm>: creates the agent VM vms/<vm>/ describes if it is missing,
+applies its CPU/memory/disk limits, joins it to the tailnet once, and re-runs
+its provisioning script. vm is one of: coder, hermes. VMs are never part of a
+plain `reconcile`, so routine container updates never touch running agents.
 EOF
 }
 
@@ -122,16 +122,6 @@ sync_compose() {
     fi
 }
 
-sync_tree() {
-    source=$1
-    destination=$2
-    if [ "$source" != "$destination" ]; then
-        (cd "$source" && find . -type f) | while IFS= read -r file; do
-            install -D -m 0644 "$source/$file" "$destination/$file"
-        done
-    fi
-}
-
 mount_ssd() {
     printf '%s\n' '== Mount SSD =='
     need blkid
@@ -164,7 +154,6 @@ mount_ssd() {
     mountpoint -q "$SSD_MOUNT" || fail "$SSD_MOUNT is not mounted"
     mkdir -p "$HOMELAB_ROOT/apps/pihole/data" \
         "$HOMELAB_ROOT/apps/pihole/dnsmasq.d" \
-        "$HERMES_DATA" \
         "$HOMELAB_ROOT/infra/docktail"
 }
 
@@ -231,7 +220,9 @@ configure_boot() {
 
 configure_firewall() {
     printf '%s\n' '== Configure Tailscale-only firewall =='
-    if ufw show added | grep '^ufw allow ' | grep -vE ' on tailscale0([[:space:]]|$)' | grep -q .; then
+    # The only non-Tailscale inbound rules allowed are the DHCP/DNS ones
+    # configure_incus adds for the agent VM bridge.
+    if ufw show added | grep '^ufw allow ' | grep -vE ' on (tailscale0|incusbr0)([[:space:]]|$)' | grep -q .; then
         fail 'UFW has an existing non-Tailscale allow rule; remove it manually before continuing'
     fi
 
@@ -244,6 +235,57 @@ configure_firewall() {
     ufw default allow outgoing
     ufw allow in on tailscale0
     ufw --force enable
+}
+
+configure_incus() {
+    printf '%s\n' '== Configure Incus for agent VMs =='
+    [ -c /dev/kvm ] || fail '/dev/kvm is missing; this kernel cannot run virtual machines'
+    INCUS_PACKAGES='incus qemu-system-arm qemu-efi-aarch64'
+    NEED_INSTALL=0
+    for pkg in $INCUS_PACKAGES; do
+        dpkg -s "$pkg" >/dev/null 2>&1 || NEED_INSTALL=1
+    done
+    if [ "$NEED_INSTALL" -eq 1 ]; then
+        apt-get update
+        # shellcheck disable=SC2086
+        apt-get install -y $INCUS_PACKAGES || \
+            fail 'could not install Incus (Debian 12 needs bookworm-backports enabled first)'
+    fi
+    systemctl enable --now incus.service
+    incus admin waitready --timeout=60
+    # ACLs on bridge networks need the nftables firewall driver.
+    incus info | grep -Eq '^[[:space:]]+firewall:[[:space:]]+nftables$' || \
+        fail 'Incus is not using the nftables firewall driver; network ACLs would not apply'
+
+    # VM disks, the image cache and backups all live on the SSD.
+    incus storage show default >/dev/null 2>&1 || \
+        incus storage create default dir source="$INCUS_POOL_DIR"
+    incus storage show default | grep -q '^driver: dir$' && \
+        [ "$(incus storage get default source)" = "$INCUS_POOL_DIR" ] || \
+        fail "Incus pool 'default' is not a dir pool at $INCUS_POOL_DIR; move or delete it first"
+    for volume in images backups; do
+        incus storage volume show default "$volume" >/dev/null 2>&1 || \
+            incus storage volume create default "$volume"
+        [ "$(incus config get "storage.${volume}_volume")" = "default/$volume" ] || \
+            incus config set "storage.${volume}_volume=default/$volume"
+    done
+
+    # The ACL's carve-outs assume exactly this address; IPv6 stays off so
+    # the IPv4-only ACL covers everything.
+    incus network show incusbr0 >/dev/null 2>&1 || incus network create incusbr0
+    incus network set incusbr0 ipv4.address=10.250.0.1/24 ipv4.nat=true ipv6.address=none
+    incus network acl show agent-egress >/dev/null 2>&1 || incus network acl create agent-egress
+    incus network acl edit agent-egress < "$REPO_ROOT/infra/incus/agent-egress.yaml"
+    incus profile show agent-vm >/dev/null 2>&1 || incus profile create agent-vm
+    incus profile edit agent-vm < "$REPO_ROOT/infra/incus/agent-vm.yaml"
+
+    # VMs get DHCP and DNS from Incus on the bridge. UFW's forward policy
+    # (and Docker's) is DROP, so VM traffic must be routed explicitly;
+    # replies come back through UFW's conntrack rule. Which destinations a VM
+    # may reach is decided by the agent-egress ACL, not here.
+    ufw allow in on incusbr0 to any port 67 proto udp
+    ufw allow in on incusbr0 to any port 53
+    ufw route allow in on incusbr0
 }
 
 disable_service() {
@@ -301,77 +343,6 @@ ensure_pihole_secret() {
     chmod 600 "$PIHOLE_ENV"
 }
 
-ensure_hermes_secret() {
-    need ssh-keygen
-
-    if [ ! -f "$HERMES_ENV" ]; then
-        ask 'Hermes dashboard username' 'admin'
-        HERMES_USERNAME=$ANSWER
-        ask_secret 'Hermes dashboard password'
-        [ -n "$SECRET_VALUE" ] || fail 'Hermes dashboard password cannot be empty'
-        HERMES_SECRET=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
-        printf 'HERMES_DASHBOARD_USERNAME=%s\nHERMES_DASHBOARD_PASSWORD=%s\nHERMES_DASHBOARD_SECRET=%s\n' \
-            "$HERMES_USERNAME" "$SECRET_VALUE" "$HERMES_SECRET" > "$HERMES_ENV"
-    fi
-    grep -Eq '^HERMES_DASHBOARD_USERNAME=.+$' "$HERMES_ENV" || fail "HERMES_DASHBOARD_USERNAME is missing from $HERMES_ENV"
-    grep -Eq '^HERMES_DASHBOARD_PASSWORD=.+$' "$HERMES_ENV" || fail "HERMES_DASHBOARD_PASSWORD is missing from $HERMES_ENV"
-    grep -Eq '^HERMES_DASHBOARD_SECRET=.+$' "$HERMES_ENV" || fail "HERMES_DASHBOARD_SECRET is missing from $HERMES_ENV"
-    chmod 600 "$HERMES_ENV"
-
-    mkdir -p "$HERMES_DATA" "$HERMES_SSH" "$HERMES_WORKSPACE" "$HERMES_OUTPUTS"
-
-    # SSH material lives in this root-only directory and is mounted file by
-    # file, so nothing the agent can write controls it:
-    #   id_ed25519           Hermes's client key (hermes, uid 10000)
-    #   authorized_keys      its public half (hermes-sandbox)
-    #   ssh_host_ed25519_key the sandbox's host key (hermes-sandbox, uid 10001)
-    #   known_hosts          pins that host key for hermes
-    if [ ! -f "$HERMES_SSH/id_ed25519" ] || [ ! -f "$HERMES_SSH/authorized_keys" ]; then
-        rm -f "$HERMES_SSH/id_ed25519" "$HERMES_SSH/id_ed25519.pub" "$HERMES_SSH/authorized_keys"
-        ssh-keygen -q -t ed25519 -N '' -C 'hermes to hermes-sandbox' -f "$HERMES_SSH/id_ed25519"
-        mv "$HERMES_SSH/id_ed25519.pub" "$HERMES_SSH/authorized_keys"
-    fi
-    if [ ! -f "$HERMES_SSH/ssh_host_ed25519_key" ]; then
-        rm -f "$HERMES_SSH/ssh_host_ed25519_key.pub"
-        ssh-keygen -q -t ed25519 -N '' -C 'hermes-sandbox host key' -f "$HERMES_SSH/ssh_host_ed25519_key"
-        rm -f "$HERMES_SSH/ssh_host_ed25519_key.pub"
-    fi
-    printf '[hermes-sandbox]:2222 %s\n' \
-        "$(ssh-keygen -y -f "$HERMES_SSH/ssh_host_ed25519_key" | cut -d ' ' -f 1,2)" > "$HERMES_SSH/known_hosts"
-    chown 10000:10000 "$HERMES_SSH/id_ed25519"
-    chown 10001:10001 "$HERMES_SSH/ssh_host_ed25519_key"
-    chmod 600 "$HERMES_SSH/id_ed25519" "$HERMES_SSH/ssh_host_ed25519_key"
-    chmod 644 "$HERMES_SSH/authorized_keys" "$HERMES_SSH/known_hosts"
-    chmod 700 "$HERMES_SSH"
-
-    # hermes-sandbox runs as uid 10001; its home is this directory.
-    chown 10001:10001 "$HERMES_WORKSPACE"
-    chmod 700 "$HERMES_WORKSPACE"
-
-    # The sandbox writes here and the hermes container reads it (read-only,
-    # as uid 10000) for the dashboard's Files tab, so it must be world
-    # readable. Only the top directory is changed, never its contents.
-    chown 10001:10001 "$HERMES_OUTPUTS"
-    chmod 755 "$HERMES_OUTPUTS"
-
-    # Standing instructions for the agent, read from its working directory.
-    # The agent can write in outputs/, so rename a staged copy into place
-    # (never write through a path it controls): a rename replaces a symlink
-    # instead of following it, and -T refuses to move into a directory.
-    agents_tmp=$(mktemp "$HERMES_DIR/.AGENTS.md.XXXXXX")
-    install -m 0644 "$REPO_ROOT/apps/hermes-agent/AGENTS.md" "$agents_tmp"
-    mv -fT "$agents_tmp" "$HERMES_OUTPUTS/AGENTS.md"
-
-    # config.yaml is desired state: the repo copy replaces the live one on
-    # every reconcile. data/ is writable by the hermes container, so stage the
-    # file in $HERMES_DIR (root-only) and rename it into place: a rename
-    # replaces whatever is at the destination (even a symlink) instead of
-    # following it, and nothing else inside data/ is touched.
-    config_tmp=$(mktemp "$HERMES_DIR/.config.yaml.XXXXXX")
-    install -m 0640 -o 10000 -g 10000 "$REPO_ROOT/apps/hermes-agent/config.yaml" "$config_tmp"
-    mv -f "$config_tmp" "$HERMES_CONFIG"
-}
-
 compose_up() {
     name=$1
     compose_file=$2
@@ -385,6 +356,69 @@ compose_up() {
     docker compose "$@" config --quiet
     # shellcheck disable=SC2086
     docker compose "$@" up -d $up_flags
+}
+
+vm_config_set() {
+    [ "$(incus config get "$1" "$2")" = "$3" ] || incus config set "$1" "$2=$3"
+}
+
+join_tailnet() {
+    name=$1
+    if ! incus exec "$name" -- tailscale status >/dev/null 2>&1; then
+        printf 'Join %s to the tailnet with a pre-approved, single-use tag:agent auth key.\n' "$name"
+        ask_secret "Tailscale auth key for $name"
+        [ -n "$SECRET_VALUE" ] || fail 'Tailscale auth key cannot be empty'
+        printf '%s' "$SECRET_VALUE" | \
+            incus exec "$name" -- sh -c 'umask 077 && cat > /run/tailscale-authkey'
+        joined=0
+        incus exec "$name" -- tailscale up --auth-key=file:/run/tailscale-authkey \
+            --advertise-tags=tag:agent --hostname="$name" --ssh --accept-dns=false || joined=$?
+        incus exec "$name" -- rm -f /run/tailscale-authkey
+        [ "$joined" -eq 0 ] || fail "$name could not join the tailnet"
+    fi
+    # VMs resolve names through Incus on the bridge: Pi-hole is on the
+    # tailnet, which tag:agent cannot reach.
+    incus exec "$name" -- tailscale set --ssh --accept-dns=false --auto-update
+}
+
+reconcile_vm() {
+    name=$1
+    command -v incus >/dev/null 2>&1 || fail "Incus is not installed; run 'sudo ./setup.sh bootstrap' first"
+    # shellcheck disable=SC1090
+    . "$REPO_ROOT/vms/$name/vm.conf"
+
+    if incus info "$name" >/dev/null 2>&1; then
+        # Memory and CPU changes may only apply after the VM restarts; disks
+        # can grow but never shrink.
+        vm_config_set "$name" limits.cpu "$VM_CPUS"
+        vm_config_set "$name" limits.memory "$VM_MEMORY"
+        [ "$(incus config device get "$name" root size)" = "$VM_DISK" ] || \
+            incus config device set "$name" root size="$VM_DISK"
+        incus info "$name" | grep -q '^Status: RUNNING$' || incus start "$name"
+    else
+        incus launch "$VM_IMAGE" "$name" --vm --profile agent-vm \
+            --config limits.cpu="$VM_CPUS" --config limits.memory="$VM_MEMORY" \
+            --device root,size="$VM_DISK"
+    fi
+
+    tries=0
+    until incus exec "$name" -- true >/dev/null 2>&1; do
+        tries=$((tries + 1))
+        [ "$tries" -le 90 ] || fail "$name did not come up within 3 minutes"
+        sleep 2
+    done
+    # First boot: let cloud-init finish before apt runs. A degraded result
+    # is not fatal; base.sh below fails loudly if the VM is unusable.
+    incus exec "$name" -- cloud-init status --wait >/dev/null 2>&1 || true
+
+    # Provisioning scripts are desired state: replace the VM's copy wholesale.
+    incus exec "$name" -- rm -rf /opt/homelab
+    incus exec "$name" -- mkdir -p /opt/homelab
+    incus file push "$REPO_ROOT/vms/base.sh" "$name/opt/homelab/base.sh"
+    incus file push -r "$REPO_ROOT/vms/$name" "$name/opt/homelab/"
+    incus exec "$name" -- sh /opt/homelab/base.sh
+    join_tailnet "$name"
+    incus exec "$name" -- sh "/opt/homelab/$name/provision.sh"
 }
 
 reconcile_project() {
@@ -404,21 +438,10 @@ reconcile_project() {
             sync_compose "$REPO_ROOT/apps/dozzle/compose.yaml" "$HOMELAB_ROOT/apps/dozzle/compose.yaml"
             compose_up dozzle "$HOMELAB_ROOT/apps/dozzle/compose.yaml" ''
             ;;
-        hermes-agent)
-            sync_compose "$REPO_ROOT/apps/hermes-agent/compose.yaml" "$HERMES_DIR/compose.yaml"
-            sync_tree "$REPO_ROOT/apps/hermes-agent/egress" "$HERMES_DIR/egress"
-            sync_tree "$REPO_ROOT/apps/hermes-agent/sandbox" "$HERMES_DIR/sandbox"
-            ensure_hermes_secret
-            # Built with plain `docker build` (not Compose's buildx-based
-            # build, which needs buildx 0.17+).
-            docker build -t hermes-sandbox:local "$HERMES_DIR/sandbox"
-            # Compose does not notice changed contents of config.yaml or the
-            # Squid files, so recreate the containers every time: the result
-            # always matches the repo, and the data and workspace persist.
-            compose_up hermes-agent "$HOMELAB_ROOT/apps/hermes-agent/compose.yaml" "$HERMES_ENV" --force-recreate
-            ;;
         *)
-            fail "unknown project '$1' (expected docktail, pihole, dozzle, or hermes-agent)"
+            [ -f "$REPO_ROOT/vms/$1/vm.conf" ] || \
+                fail "unknown project '$1' (expected docktail, pihole, dozzle, or a VM under vms/)"
+            reconcile_vm "$1"
             ;;
     esac
 }
@@ -427,7 +450,6 @@ reconcile_all() {
     reconcile_project docktail
     reconcile_project pihole
     reconcile_project dozzle
-    reconcile_project hermes-agent
 }
 
 require_bootstrapped() {
@@ -450,6 +472,7 @@ run_bootstrap() {
     configure_boot
     configure_firewall
     configure_services
+    configure_incus
 }
 
 case "$MODE" in
