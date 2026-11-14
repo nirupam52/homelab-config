@@ -1,0 +1,44 @@
+# Desired Hermes settings. `sudo ./setup.sh reconcile hermes` installs this
+# file over ~/.hermes/config.yaml in the hermes VM whenever they differ (and
+# restarts Hermes), so edits made on the dashboard's Config page last only
+# until the next reconcile. Change settings here. To roll back: git revert,
+# then reconcile.
+#
+# Hermes runs directly in its own VM with the default local terminal: the VM
+# is the sandbox, so shell, file, browser and code tools all work.
+
+model:
+  provider: "openai-codex"
+  default: gpt-6.1-terra
+  base_url: https://chatgpt.com/backend-api/codex
+  api_mode: codex_responses
+
+terminal:
+  cwd: "/home/agent/work"
+
+# smart: a guardian model escalates risky commands for approval; the rest run
+# unattended. Scheduled (cron) runs deny anything risky.
+approvals:
+  mode: "smart"
+
+# Never borrow a Codex CLI or Claude Code login found on the machine.
+auth:
+  adopt_external_logins: false
+
+web:
+  search_backend: "openai-native"
+  keyless_fallback: false
+  keyless_rescue: false
+
+telemetry:
+  shared_metrics:
+    enabled: false
+    send: false
+    offer_version: 2
+
+dashboard:
+  theme: mono
+
+# Matches the pinned Hermes release; startup migrations rewrite this file
+# otherwise.
+_config_version: 51

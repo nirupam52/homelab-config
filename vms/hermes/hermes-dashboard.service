@@ -1,0 +1,20 @@
+[Unit]
+Description=Hermes Agent web dashboard (loopback; published by tailscale serve)
+Wants=network-online.target hermes-gateway.service
+After=network-online.target hermes-gateway.service
+
+[Service]
+User=agent
+Group=agent
+WorkingDirectory=/home/agent/work
+Environment=HOME=/home/agent
+Environment=HERMES_HOME=/home/agent/.hermes
+Environment=PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/etc/hermes/dashboard.env
+EnvironmentFile=/etc/hermes/public-url.env
+ExecStart=/home/agent/.local/bin/hermes dashboard --host 127.0.0.1 --port 9119 --no-open
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

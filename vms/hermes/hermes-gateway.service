@@ -1,0 +1,18 @@
+[Unit]
+Description=Hermes Agent gateway (chat runtime, cron, messaging)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=agent
+Group=agent
+WorkingDirectory=/home/agent/work
+Environment=HOME=/home/agent
+Environment=HERMES_HOME=/home/agent/.hermes
+Environment=PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/agent/.local/bin/hermes gateway run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
