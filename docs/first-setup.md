@@ -47,6 +47,9 @@ for the first run.
   ```
 - Applies the Wi-Fi and Bluetooth boot overlays and configures the firewall.
 - Disables system SSH, Avahi, triggerhappy, and Bluetooth.
+- Installs Incus with its storage pool on the SSD, the `incusbr0` bridge,
+  and the agent VM ACL and profile. The VMs themselves are created later,
+  one at a time — see [Agent VMs](agent-vms.md).
 
 **reconcile** (application-level):
 
