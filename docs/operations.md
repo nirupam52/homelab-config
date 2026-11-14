@@ -13,14 +13,6 @@ SSD: /mnt/ssd
 ├── docker/                  Docker data root
 └── homelab/
     ├── apps/dozzle/compose.yaml
-    ├── apps/hermes-agent/compose.yaml
-    ├── apps/hermes-agent/egress/      Squid allowlists (llm.conf, dev.conf)
-    ├── apps/hermes-agent/sandbox/     Sandbox image build context
-    ├── apps/hermes-agent/.env         Dashboard username/password/secret
-    ├── apps/hermes-agent/data/        Hermes state (auth.json, sessions, skills; config.yaml is installed from the repo)
-    ├── apps/hermes-agent/ssh/         Hermes/sandbox SSH keys and known_hosts (root-only directory)
-    ├── apps/hermes-agent/workspace/   Sandbox home directory (the agent's files)
-    ├── apps/hermes-agent/outputs/     Agent deliverables, shown in the dashboard Files tab (read-only in hermes)
     ├── apps/pihole/compose.yaml
     ├── apps/pihole/.env        Pi-hole password and Tailscale address
     ├── apps/pihole/data/       Pi-hole data
@@ -40,15 +32,13 @@ docker compose --env-file /mnt/ssd/homelab/infra/docktail/.env \
   -f /mnt/ssd/homelab/infra/docktail/compose.yaml ps
 docker compose --env-file /mnt/ssd/homelab/apps/pihole/.env \
   -f /mnt/ssd/homelab/apps/pihole/compose.yaml ps
-docker compose --env-file /mnt/ssd/homelab/apps/hermes-agent/.env \
-  -f /mnt/ssd/homelab/apps/hermes-agent/compose.yaml ps
 docker compose -f /mnt/ssd/homelab/apps/dozzle/compose.yaml ps
 ```
 
 The firewall defaults to deny incoming and allow outgoing, with an inbound
 allow only on `tailscale0`. Pi-hole is expected to be the only container
-with published host ports. The hermes-agent services should show none. Check
-the Tailscale admin console if a DockTail Service is pending approval — see
+with published host ports. Check the Tailscale admin console if a DockTail
+Service is pending approval — see
 [Services](services.md#troubleshooting).
 
 For DNS-specific verification, see [docs/dns.md](dns.md#verify).
@@ -67,7 +57,7 @@ sudo ./setup.sh             # unsure, or both kinds of change
 ```
 
 For a single application: `sudo ./setup.sh reconcile <project>` where
-`<project>` is one of `docktail`, `pihole`, `dozzle`, or `hermes-agent`.
+`<project>` is one of `docktail`, `pihole`, or `dozzle`.
 
 `docker compose up -d` reconciles changed images and configuration without
 removing application data. Do not run `docker compose down -v`.

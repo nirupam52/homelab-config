@@ -14,13 +14,6 @@ SECRET_VALUE=
 TAILSCALE_IPV4=
 MODE=full
 PROJECT=
-HERMES_DIR=$HOMELAB_ROOT/apps/hermes-agent
-HERMES_ENV=$HERMES_DIR/.env
-HERMES_DATA=$HERMES_DIR/data
-HERMES_CONFIG=$HERMES_DATA/config.yaml
-HERMES_SSH=$HERMES_DIR/ssh
-HERMES_WORKSPACE=$HERMES_DIR/workspace
-HERMES_OUTPUTS=$HERMES_DIR/outputs
 
 fail() {
     printf 'setup: %s\n' "$1" >&2
@@ -39,8 +32,8 @@ root, Tailscale connection, boot overlays, firewall, disabled services). It
 never formats a disk. Idempotent but rarely needed once a host is set up.
 
 reconcile [project]: syncs Compose files and secrets, then starts or updates
-containers. project is one of: docktail, pihole, dozzle, hermes-agent. Omit
-it to reconcile all four. Fails fast if bootstrap has never completed.
+containers. project is one of: docktail, pihole, dozzle. Omit it to
+reconcile all three. Fails fast if bootstrap has never completed.
 EOF
 }
 
@@ -122,16 +115,6 @@ sync_compose() {
     fi
 }
 
-sync_tree() {
-    source=$1
-    destination=$2
-    if [ "$source" != "$destination" ]; then
-        (cd "$source" && find . -type f) | while IFS= read -r file; do
-            install -D -m 0644 "$source/$file" "$destination/$file"
-        done
-    fi
-}
-
 mount_ssd() {
     printf '%s\n' '== Mount SSD =='
     need blkid
@@ -164,7 +147,6 @@ mount_ssd() {
     mountpoint -q "$SSD_MOUNT" || fail "$SSD_MOUNT is not mounted"
     mkdir -p "$HOMELAB_ROOT/apps/pihole/data" \
         "$HOMELAB_ROOT/apps/pihole/dnsmasq.d" \
-        "$HERMES_DATA" \
         "$HOMELAB_ROOT/infra/docktail"
 }
 
@@ -301,77 +283,6 @@ ensure_pihole_secret() {
     chmod 600 "$PIHOLE_ENV"
 }
 
-ensure_hermes_secret() {
-    need ssh-keygen
-
-    if [ ! -f "$HERMES_ENV" ]; then
-        ask 'Hermes dashboard username' 'admin'
-        HERMES_USERNAME=$ANSWER
-        ask_secret 'Hermes dashboard password'
-        [ -n "$SECRET_VALUE" ] || fail 'Hermes dashboard password cannot be empty'
-        HERMES_SECRET=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
-        printf 'HERMES_DASHBOARD_USERNAME=%s\nHERMES_DASHBOARD_PASSWORD=%s\nHERMES_DASHBOARD_SECRET=%s\n' \
-            "$HERMES_USERNAME" "$SECRET_VALUE" "$HERMES_SECRET" > "$HERMES_ENV"
-    fi
-    grep -Eq '^HERMES_DASHBOARD_USERNAME=.+$' "$HERMES_ENV" || fail "HERMES_DASHBOARD_USERNAME is missing from $HERMES_ENV"
-    grep -Eq '^HERMES_DASHBOARD_PASSWORD=.+$' "$HERMES_ENV" || fail "HERMES_DASHBOARD_PASSWORD is missing from $HERMES_ENV"
-    grep -Eq '^HERMES_DASHBOARD_SECRET=.+$' "$HERMES_ENV" || fail "HERMES_DASHBOARD_SECRET is missing from $HERMES_ENV"
-    chmod 600 "$HERMES_ENV"
-
-    mkdir -p "$HERMES_DATA" "$HERMES_SSH" "$HERMES_WORKSPACE" "$HERMES_OUTPUTS"
-
-    # SSH material lives in this root-only directory and is mounted file by
-    # file, so nothing the agent can write controls it:
-    #   id_ed25519           Hermes's client key (hermes, uid 10000)
-    #   authorized_keys      its public half (hermes-sandbox)
-    #   ssh_host_ed25519_key the sandbox's host key (hermes-sandbox, uid 10001)
-    #   known_hosts          pins that host key for hermes
-    if [ ! -f "$HERMES_SSH/id_ed25519" ] || [ ! -f "$HERMES_SSH/authorized_keys" ]; then
-        rm -f "$HERMES_SSH/id_ed25519" "$HERMES_SSH/id_ed25519.pub" "$HERMES_SSH/authorized_keys"
-        ssh-keygen -q -t ed25519 -N '' -C 'hermes to hermes-sandbox' -f "$HERMES_SSH/id_ed25519"
-        mv "$HERMES_SSH/id_ed25519.pub" "$HERMES_SSH/authorized_keys"
-    fi
-    if [ ! -f "$HERMES_SSH/ssh_host_ed25519_key" ]; then
-        rm -f "$HERMES_SSH/ssh_host_ed25519_key.pub"
-        ssh-keygen -q -t ed25519 -N '' -C 'hermes-sandbox host key' -f "$HERMES_SSH/ssh_host_ed25519_key"
-        rm -f "$HERMES_SSH/ssh_host_ed25519_key.pub"
-    fi
-    printf '[hermes-sandbox]:2222 %s\n' \
-        "$(ssh-keygen -y -f "$HERMES_SSH/ssh_host_ed25519_key" | cut -d ' ' -f 1,2)" > "$HERMES_SSH/known_hosts"
-    chown 10000:10000 "$HERMES_SSH/id_ed25519"
-    chown 10001:10001 "$HERMES_SSH/ssh_host_ed25519_key"
-    chmod 600 "$HERMES_SSH/id_ed25519" "$HERMES_SSH/ssh_host_ed25519_key"
-    chmod 644 "$HERMES_SSH/authorized_keys" "$HERMES_SSH/known_hosts"
-    chmod 700 "$HERMES_SSH"
-
-    # hermes-sandbox runs as uid 10001; its home is this directory.
-    chown 10001:10001 "$HERMES_WORKSPACE"
-    chmod 700 "$HERMES_WORKSPACE"
-
-    # The sandbox writes here and the hermes container reads it (read-only,
-    # as uid 10000) for the dashboard's Files tab, so it must be world
-    # readable. Only the top directory is changed, never its contents.
-    chown 10001:10001 "$HERMES_OUTPUTS"
-    chmod 755 "$HERMES_OUTPUTS"
-
-    # Standing instructions for the agent, read from its working directory.
-    # The agent can write in outputs/, so rename a staged copy into place
-    # (never write through a path it controls): a rename replaces a symlink
-    # instead of following it, and -T refuses to move into a directory.
-    agents_tmp=$(mktemp "$HERMES_DIR/.AGENTS.md.XXXXXX")
-    install -m 0644 "$REPO_ROOT/apps/hermes-agent/AGENTS.md" "$agents_tmp"
-    mv -fT "$agents_tmp" "$HERMES_OUTPUTS/AGENTS.md"
-
-    # config.yaml is desired state: the repo copy replaces the live one on
-    # every reconcile. data/ is writable by the hermes container, so stage the
-    # file in $HERMES_DIR (root-only) and rename it into place: a rename
-    # replaces whatever is at the destination (even a symlink) instead of
-    # following it, and nothing else inside data/ is touched.
-    config_tmp=$(mktemp "$HERMES_DIR/.config.yaml.XXXXXX")
-    install -m 0640 -o 10000 -g 10000 "$REPO_ROOT/apps/hermes-agent/config.yaml" "$config_tmp"
-    mv -f "$config_tmp" "$HERMES_CONFIG"
-}
-
 compose_up() {
     name=$1
     compose_file=$2
@@ -404,21 +315,8 @@ reconcile_project() {
             sync_compose "$REPO_ROOT/apps/dozzle/compose.yaml" "$HOMELAB_ROOT/apps/dozzle/compose.yaml"
             compose_up dozzle "$HOMELAB_ROOT/apps/dozzle/compose.yaml" ''
             ;;
-        hermes-agent)
-            sync_compose "$REPO_ROOT/apps/hermes-agent/compose.yaml" "$HERMES_DIR/compose.yaml"
-            sync_tree "$REPO_ROOT/apps/hermes-agent/egress" "$HERMES_DIR/egress"
-            sync_tree "$REPO_ROOT/apps/hermes-agent/sandbox" "$HERMES_DIR/sandbox"
-            ensure_hermes_secret
-            # Built with plain `docker build` (not Compose's buildx-based
-            # build, which needs buildx 0.17+).
-            docker build -t hermes-sandbox:local "$HERMES_DIR/sandbox"
-            # Compose does not notice changed contents of config.yaml or the
-            # Squid files, so recreate the containers every time: the result
-            # always matches the repo, and the data and workspace persist.
-            compose_up hermes-agent "$HOMELAB_ROOT/apps/hermes-agent/compose.yaml" "$HERMES_ENV" --force-recreate
-            ;;
         *)
-            fail "unknown project '$1' (expected docktail, pihole, dozzle, or hermes-agent)"
+            fail "unknown project '$1' (expected docktail, pihole, or dozzle)"
             ;;
     esac
 }
@@ -427,7 +325,6 @@ reconcile_all() {
     reconcile_project docktail
     reconcile_project pihole
     reconcile_project dozzle
-    reconcile_project hermes-agent
 }
 
 require_bootstrapped() {

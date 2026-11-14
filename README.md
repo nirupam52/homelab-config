@@ -16,10 +16,6 @@ reachable only through Tailscale — no exposed ports except Pi-hole DNS.
   [Services](docs/services.md#about-docktail) for that trade-off.
 - Pi-hole is the one exception: it binds DNS (UDP/TCP 53) directly to the
   Pi's Tailscale IP.
-- [hermes-agent](apps/hermes-agent) is an AI agent whose only entry point is
-  its web dashboard. It runs on a ChatGPT/Codex subscription login. Its
-  shell and file tools execute in a separate, keyless sandbox container, and
-  every outbound connection goes through a hostname-allowlist proxy.
 
 ## Apps
 
@@ -27,7 +23,6 @@ reachable only through Tailscale — no exposed ports except Pi-hole DNS.
 |---|---|---|
 | [dozzle](apps/dozzle) | Container log viewer | `https://dozzle.<tailnet>.ts.net` |
 | [pihole](apps/pihole) | Tailnet-wide DNS + ad blocking | `https://pihole.<tailnet>.ts.net/admin/` |
-| [hermes-agent](apps/hermes-agent) | AI agent web dashboard with a sandboxed shell, signed in with ChatGPT/Codex | `https://hermes.<tailnet>.ts.net` |
 | [docktail](infra/docktail) | Publishes the apps above as Tailscale Services | — |
 
 ## Getting started
@@ -45,7 +40,6 @@ reachable only through Tailscale — no exposed ports except Pi-hole DNS.
 | [docs/prerequisites.md](docs/prerequisites.md) | Tailscale admin console setup, SSD prep, deploy key |
 | [docs/first-setup.md](docs/first-setup.md) | Cloning, running `setup.sh`, what bootstrap/reconcile do |
 | [docs/services.md](docs/services.md) | Service URLs, DockTail troubleshooting, adding new apps |
-| [docs/hermes-agent.md](docs/hermes-agent.md) | Sandboxed agent deployment, Codex sign-in, egress allowlists, security |
 | [docs/dns.md](docs/dns.md) | Tailnet-wide DNS via Pi-hole |
 | [docs/operations.md](docs/operations.md) | Verify/update commands, directory layout, recovery |
 
@@ -57,7 +51,6 @@ docker/daemon.json       Docker daemon config
 infra/docktail/          Tailscale Service publisher
 apps/dozzle/             container log viewer
 apps/pihole/             DNS + ad blocking
-apps/hermes-agent/       AI agent web dashboard, sandbox, egress proxies
 ```
 
 Runtime data, secrets, and mirrored Compose files live on the SSD, not in

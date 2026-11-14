@@ -6,7 +6,6 @@ advertised host, the usual URLs are:
 | Service | URL |
 |---|---|
 | Dozzle | `https://dozzle.<tailnet>.ts.net` |
-| hermes-agent | `https://hermes.<tailnet>.ts.net` |
 | Pi-hole | `https://pihole.<tailnet>.ts.net/admin/` |
 
 ## About DockTail

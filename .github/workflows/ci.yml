@@ -33,9 +33,6 @@ jobs:
       # values let `config` parse and validate them without any real secret.
       - name: Validate compose files
         env:
-          HERMES_DASHBOARD_USERNAME: ci
-          HERMES_DASHBOARD_PASSWORD: ci
-          HERMES_DASHBOARD_SECRET: ci
           PIHOLE_WEBPASSWORD: ci
           TAILSCALE_IPV4: 100.64.0.1
           TAILSCALE_OAUTH_CLIENT_ID: ci
