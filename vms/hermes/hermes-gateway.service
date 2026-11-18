@@ -1,0 +1,27 @@
+[Unit]
+Description=Hermes Agent gateway (chat runtime, cron, messaging)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=agent
+Group=agent
+WorkingDirectory=/home/agent/work
+Environment=HOME=/home/agent
+Environment=HERMES_HOME=/home/agent/.hermes
+Environment=PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/agent/.local/bin/hermes gateway run
+# Restart policy copied from the unit Hermes generates itself: exit 75 asks
+# for a restart, 78 is a fatal config error. TimeoutStopSec covers Hermes's
+# default cron drain (30 s), cleanup reserve (10 s) and headroom (30 s).
+Restart=always
+RestartSec=5
+RestartForceExitStatus=75
+SuccessExitStatus=75
+RestartPreventExitStatus=78
+KillMode=mixed
+TimeoutStopSec=70
+
+[Install]
+WantedBy=multi-user.target
