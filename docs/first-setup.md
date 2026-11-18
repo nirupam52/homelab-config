@@ -26,9 +26,8 @@ The guided prompts request, in order:
    before system SSH is disabled.
 3. The Tailscale OAuth client ID and secret.
 4. A Pi-hole web password.
-5. A Hermes dashboard username and password.
 
-Prompts 3, 4, and 5 only appear the first time, or after their runtime
+Prompts 3 and 4 only appear the first time, or after their runtime
 `.env` file is removed; reruns keep the existing values. Runtime `.env`
 files are created on the SSD with mode `600`.
 
@@ -48,6 +47,9 @@ for the first run.
   ```
 - Applies the Wi-Fi and Bluetooth boot overlays and configures the firewall.
 - Disables system SSH, Avahi, triggerhappy, and Bluetooth.
+- Installs Incus with its storage pool on the SSD, the `incusbr0` bridge,
+  and the agent VM ACL and profile. The VMs themselves are created later,
+  one at a time — see [Agent VMs](agent-vms.md).
 
 **reconcile** (application-level):
 
@@ -55,11 +57,7 @@ for the first run.
 - Collects any missing secret; preserves existing `.env` values (stays mode
   `600`).
 - Refreshes Pi-hole's `.env` with the current Tailscale address.
-- Starts or updates DockTail, Pi-hole, Dozzle, and Hermes (the agent, its
-  sandbox, and two egress proxies). The Hermes sandbox image is built on the
-  Pi from `apps/hermes-agent/sandbox/`.
-- Generates the SSH keys Hermes and its sandbox use to authenticate each
-  other, once.
+- Starts or updates DockTail, Pi-hole, and Dozzle.
 - Never formats the SSD or removes application data or Compose volumes.
 - Fails fast if bootstrap has never completed: it requires the SSD mounted
   at `/mnt/ssd`, Docker's data root on the SSD, and a connected Tailscale

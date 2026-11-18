@@ -1,0 +1,23 @@
+# Network ACL on the incusbr0 bridge for agent VMs. `sudo ./setup.sh bootstrap`
+# replaces the live ACL with this file.
+#
+# Agents have root inside their VM and HTTPS to anywhere, so a port allowlist
+# would not hold. This ACL does one job: keep VMs off everything private.
+# Incus applies reject before allow regardless of order, and rejects
+# anything unmatched (including all inbound connections; replies to a VM's
+# own connections pass). Incus's own DHCP and DNS on the bridge stay reachable.
+#
+# This ACL does not separate VMs from each other on the bridge; port
+# isolation in the agent-vm profile does.
+description: "Agent VMs: public IPv4 only; no LAN, tailnet, host, or inbound"
+egress:
+  - action: reject
+    description: "LAN, tailnet (incl. via the host), this host, loopback, link-local, multicast"
+    destination: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,224.0.0.0/3
+    state: enabled
+  - action: allow
+    description: "Public IPv4"
+    destination: 0.0.0.0/0
+    state: enabled
+ingress: []
+config: {}

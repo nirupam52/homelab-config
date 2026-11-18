@@ -6,7 +6,6 @@ advertised host, the usual URLs are:
 | Service | URL |
 |---|---|
 | Dozzle | `https://dozzle.<tailnet>.ts.net` |
-| hermes-agent | `https://hermes.<tailnet>.ts.net` |
 | Pi-hole | `https://pihole.<tailnet>.ts.net/admin/` |
 
 ## About DockTail
@@ -69,3 +68,7 @@ DockTail watches the labels in the application Compose files. Adding an app
 means adding another labeled Compose project under `apps/`. Do not add a
 Tailscale sidecar or host port publication, and do not add
 `docktail.funnel.*` labels — nothing here is meant to be public.
+
+Also add its `svc:<name>` to the Services grant and to
+`autoApprovers.services` in the
+[policy](prerequisites.md#1-tailscale-admin-console).

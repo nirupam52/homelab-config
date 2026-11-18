@@ -1,0 +1,38 @@
+# Starting Hermes settings. vms/hermes/provision.sh installs this as
+# ~/.hermes/config.yaml when the hermes VM is created; after that, change
+# settings on the dashboard's Config page. This file does not track them.
+#
+# Hermes runs directly in its own VM with the default local terminal: the VM
+# is the sandbox, so shell, file, browser and code tools all work.
+
+model:
+  provider: "openai-codex"
+  default: gpt-6.1-terra
+  base_url: https://chatgpt.com/backend-api/codex
+  api_mode: codex_responses
+
+terminal:
+  cwd: "/home/agent/work"
+
+# smart: a guardian model escalates risky commands for approval; the rest run
+# unattended. Scheduled (cron) runs deny anything risky.
+approvals:
+  mode: "smart"
+
+web:
+  search_backend: "openai-native"
+  keyless_fallback: false
+  keyless_rescue: false
+
+telemetry:
+  shared_metrics:
+    enabled: false
+    send: false
+    offer_version: 2
+
+dashboard:
+  theme: mono
+
+# The schema version this file was written for; Hermes migrates it forward
+# on first start.
+_config_version: 51

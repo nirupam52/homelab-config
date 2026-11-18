@@ -12,7 +12,6 @@ updates:
   - package-ecosystem: docker-compose
     directories:
       - /apps/dozzle
-      - /apps/hermes-agent
       - /apps/pihole
       - /infra/docktail
     schedule:
@@ -23,19 +22,6 @@ updates:
     cooldown:
       default-days: 5
     open-pull-requests-limit: 5
-    commit-message:
-      prefix: deps
-
-  # Digest of the sandbox's debian base image (apps/hermes-agent/sandbox).
-  - package-ecosystem: docker
-    directory: /apps/hermes-agent/sandbox
-    schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
-      timezone: America/Chicago
-    cooldown:
-      default-days: 5
     commit-message:
       prefix: deps
 

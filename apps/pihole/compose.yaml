@@ -4,6 +4,9 @@ services:
   pihole:
     image: pihole/pihole:2026.10.0@sha256:d34134716fc32038b052a8674c7c6879e0ff21f0e6d8af345166fffa2c27c113
     restart: unless-stopped
+    # Tailnet-wide DNS: when memory runs out (agent VMs share this host),
+    # the kernel should kill almost anything before Pi-hole.
+    oom_score_adj: -500
     environment:
       TZ: ${TZ:-UTC}
       FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD:?Set PIHOLE_WEBPASSWORD in .env}

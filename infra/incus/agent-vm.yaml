@@ -1,0 +1,21 @@
+# Incus profile shared by every agent VM. `sudo ./setup.sh bootstrap`
+# replaces the live profile with this file. Per-VM CPU, memory and disk size
+# are set when vms/create.sh launches the VM.
+#
+# Port isolation is the only thing keeping VMs from reaching each other on
+# the bridge. IPv4 filtering (which includes MAC filtering) stops a VM from
+# using another VM's address. IPv6 is off on the bridge, so it needs no filter.
+description: "Agent VM: SSD storage, isolated port on the NAT bridge"
+config:
+  boot.autostart: "true"
+devices:
+  root:
+    type: disk
+    path: /
+    pool: default
+  eth0:
+    type: nic
+    name: eth0
+    network: incusbr0
+    security.port_isolation: "true"
+    security.ipv4_filtering: "true"
