@@ -36,6 +36,8 @@ once a host is set up.
 reconcile [project]: syncs Compose files and secrets, then starts or updates
 containers. project is one of: docktail, pihole, dozzle. Omit it to
 reconcile all three. Fails fast if bootstrap has never completed.
+
+Agent VMs are not managed here: create one with `sudo ./vms/create.sh <vm>`.
 EOF
 }
 
