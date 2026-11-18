@@ -17,8 +17,9 @@ The setup script records the Pi's Tailscale IPv4 address in
 5. In Pi-hole's **Lists** settings, verify or add ad/tracker blocklists, then
    update gravity.
 
-The existing `tag:server:*` ACL permits tailnet members to reach direct DNS
-on the Pi. No `svc:pihole-dns` service is needed because Tailscale Services
+The port 53 grant to `tag:server` in the
+[policy](prerequisites.md#1-tailscale-admin-console) lets tailnet members
+reach direct DNS on the Pi. No `svc:pihole-dns` service is needed because Tailscale Services
 currently support TCP only, while clients normally send DNS over UDP.
 
 ## Verify

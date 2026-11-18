@@ -5,44 +5,99 @@ Complete these before running `setup.sh`.
 ## 1. Tailscale admin console
 
 1. Enable **MagicDNS** and **HTTPS certificates**.
-2. Create the `tag:server` and `tag:container` tags. Allow `autogroup:admin`
-   to own `tag:server`, and allow `tag:server` to own `tag:container`.
+2. Create the `tag:server`, `tag:container` and `tag:agent` tags.
 3. Create a DockTail OAuth client with **General → Services → Write**
    permission, and attach `tag:container` to it. Keep the client ID and
    secret ready for the setup prompts.
-4. Add an ACL equivalent to:
+4. Set the policy file. Access is per device: list your devices' Tailscale
+   IPs under `hosts`.
 
-```json
+```jsonc
 {
-  "tagOwners": {
-    "tag:server": ["autogroup:admin"],
-    "tag:container": ["tag:server"]
-  },
-  "autoApprovers": {
-    "services": {
-      "tag:container": ["tag:server"]
-    }
-  },
-  "grants": [
-    {
-      "src": ["autogroup:member"],
-      "dst": ["svc:dozzle", "svc:pihole"],
-      "ip": ["443"]
-    }
-  ],
-  "acls": [
-    {"action": "accept", "src": ["autogroup:member"], "dst": ["tag:server:*"]}
-  ],
-  "ssh": [
-    {
-      "action": "accept",
-      "src": ["autogroup:member"],
-      "dst": ["tag:server"],
-      "users": ["autogroup:nonroot", "root"]
-    }
-  ]
+   "hosts": {
+      "admin-phone":   "100.x.y.z",
+      "admin-mac":     "100.x.y.z",
+      "admin-windows": "100.x.y.z",
+   },
+
+   "grants": [
+      // Apps published by DockTail.
+      {
+         "src": ["admin-phone", "admin-mac", "admin-windows"],
+         "dst": ["svc:dozzle", "svc:pihole", "svc:llama"],
+         "ip":  ["443"],
+      },
+      // Pi-hole DNS for the whole tailnet.
+      {
+         "src": ["autogroup:member"],
+         "dst": ["tag:server"],
+         "ip":  ["53"],
+      },
+      // SSH to the Pi.
+      {
+         "src": ["admin-mac", "admin-windows"],
+         "dst": ["tag:server"],
+         "ip":  ["22"],
+      },
+      // Agent VMs. Phone: the Hermes dashboard only.
+      {
+         "src": ["admin-phone"],
+         "dst": ["tag:agent"],
+         "ip":  ["443"],
+      },
+      // Agent VMs. Computers: SSH, dashboard, dev-server previews.
+      {
+         "src": ["admin-mac", "admin-windows"],
+         "dst": ["tag:agent"],
+         "ip":  ["*"],
+      },
+      // Nothing has tag:agent as a source: agent VMs reach nothing on the tailnet.
+   ],
+
+   "tagOwners": {
+      "tag:server":    ["autogroup:admin"],
+      "tag:container": ["tag:server"],
+      "tag:agent":     ["autogroup:admin"],
+   },
+
+   // Never list tag:agent here: no Services, routes or exit nodes.
+   "autoApprovers": {
+      "services": {
+         "svc:dozzle": ["tag:server"],
+         "svc:pihole": ["tag:server"],
+         "svc:llama":  ["tag:server"],
+      },
+   },
+
+   // Grants above decide which devices reach port 22.
+   "ssh": [
+      {
+         "action": "accept",
+         "src":    ["autogroup:owner"],
+         "dst":    ["tag:server"],
+         "users":  ["autogroup:nonroot", "root"],
+      },
+      {
+         "action": "accept",
+         "src":    ["autogroup:owner"],
+         "dst":    ["tag:agent"],
+         "users":  ["agent"],
+      },
+   ],
 }
 ```
+
+`svc:llama` is not part of this repository; drop it if you don't run it.
+
+`tag:agent` is for the [agent VMs](agent-vms.md). `vms/create.sh` joins
+each VM through a login link, so the admin who opens it must own the tag.
+Keep `tag:agent` out of every `src`, out of `autoApprovers` and out of
+Funnel. Tagged devices are not `autogroup:member`, so the VMs cannot use
+Pi-hole either; they resolve names through Incus.
+
+Inside a VM you are root with its logins. For a fresh sign-in before each
+agent SSH session (every 12 hours by default), set that rule's `action` to
+`"check"`.
 
 ## 2. SSD
 
